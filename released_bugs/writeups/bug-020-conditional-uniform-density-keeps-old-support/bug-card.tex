@@ -1,0 +1,83 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 20: conditional uniform density keeps old support}
+
+\begin{counterexamplebox}
+\textbf{Task.} Compute the density of a uniform random variable conditioned on
+being larger than \(1/2\).
+\[
+Y=\operatorname{given}(U,U>1/2),\qquad U\sim\operatorname{Uniform}(0,1).
+\]
+
+\medskip
+\textbf{SymPy's answer.} \[
+\operatorname{density}(Y)(x)
+=2\cdot\mathbf{1}_{[0,1]}(x).
+\]
+
+\medskip
+\textbf{Correct answer.} \[
+\operatorname{density}(Y)(x)
+=2\cdot\mathbf{1}_{(1/2,1]}(x).
+\]
+
+\medskip
+\textbf{Explanation.} Conditioning on \(U>1/2\) must both divide by
+\(P(U>1/2)=1/2\) and restrict the support to \((1/2,1]\). Note that SymPy's returned
+density has total mass 2.
+
+\medskip
+\textbf{Likely root cause.} The diagnosis identifies
+\texttt{ContinuousPSpace.conditional\_space} in \nolinkurl{sympy/stats/crv.py}
+as storing only the renormalized original PDF, while
+\texttt{compute\_density} returns it unchanged when no variables are
+marginalized.  This is a new failure mode with no public precedent.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-020-conditional-uniform-density-keeps-old-support}
+\end{counterexamplebox}
+
+\end{document}

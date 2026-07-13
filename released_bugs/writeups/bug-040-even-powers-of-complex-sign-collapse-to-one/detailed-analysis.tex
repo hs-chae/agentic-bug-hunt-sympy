@@ -1,0 +1,171 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 40: Even Powers of Complex Sign Collapse to One}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import Abs, I, N, sign
+
+z = 1 + I
+actual = sign(z) ** 2
+expected = z ** 2 / Abs(z) ** 2
+
+print("z:", z)
+print("actual:", actual)
+print("expected:", expected)
+print("numeric actual:", N(actual, 50))
+print("numeric expected:", N(expected, 50))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+z: 1 + I
+actual: 1
+expected: (1 + I)**2/2
+numeric actual: 1.0000000000000000000000000000000000000000000000000
+numeric expected: 1.0*I
+\end{lstlisting}
+
+SymPy evaluates \texttt{sign(1 + I)**2} to \texttt{1}. This is a mathematically false simplification for the non-real complex argument \(1+i\): the complex sign is a unit complex direction, not a real-valued sign constrained to \(\pm 1\).
+
+\subsection{Expected Behavior}
+
+For \(z = 1+i\), \(\operatorname{sign}(z)^2\) should evaluate consistently with the complex-sign definition:
+\[
+  \operatorname{sign}(1+i)^2
+  = \frac{(1+i)^2}{\operatorname{Abs}(1+i)^2}
+  = \frac{(1+i)^2}{2}
+  = i.
+\]
+Equivalently, SymPy should leave the power unevaluated rather than returning \(1\) when it cannot justify the complex-direction value.
+
+\subsection{Mathematical Explanation}
+
+For a nonzero complex number \(z\), SymPy's documented complex sign represents the unit direction
+\[
+  \operatorname{sign}(z) = \frac{z}{|z|}.
+\]
+Therefore,
+\[
+  \operatorname{sign}(z)^2 = \frac{z^2}{|z|^2}.
+\]
+This expression is not identically \(1\) over the non-real complex numbers. In the representative case,
+\[
+  \frac{(1+i)^2}{|1+i|^2}
+  = \frac{1 + 2i + i^2}{2}
+  = \frac{2i}{2}
+  = i.
+\]
+The returned value \(1\) is not an equivalent representation of \(i\), not a harmless branch choice, and not a delayed symbolic form. It changes the complex direction by replacing the square of a unit complex number with the real-sign identity \(\operatorname{sign}(x)^2 = 1\), which is valid for nonzero real \(x\) but not for arbitrary nonzero complex \(z\).
+
+\subsection{Source-Level Diagnosis}
+
+The source-level diagnosis identifies \nolinkurl{sympy/functions/elementary/complexes.py}, specifically the method \texttt{sign.\_eval\_power}, as the immediate cause. The traced call path is: \texttt{sign(1 + I)} remains unevaluated in \texttt{sign.eval} because the argument is neither real nor purely imaginary; constructing \texttt{sign(1 + I)**2} then dispatches to \texttt{sign.\_eval\_power}. That method applies an even-power shortcut using only a nonzero-argument check and an even-integer exponent check:
+
+\begin{lstlisting}[style=bugpython]
+if (
+    fuzzy_not(self.args[0].is_zero) and
+    other.is_integer and
+    other.is_even
+):
+    return S.One
+\end{lstlisting}
+
+For the argument \(1+i\), \texttt{is\_zero} is false and the exponent \(2\) is an even integer, so the method returns \texttt{S.One} immediately. This bypasses the complex-sign definition \(\operatorname{sign}(z)=z/\operatorname{Abs}(z)\), which would give \(i\) after squaring. The diagnosis therefore indicates that the shortcut is overbroad: it applies a real-valued identity to an unevaluated non-real complex sign. A plausible fix direction supported by the diagnosis is to restrict this shortcut to cases where the sign value is known to square to \(1\), such as real signs, or otherwise leave the power unevaluated or rewrite through \(z/\operatorname{Abs}(z)\) for general complex arguments.
+
+\subsection{Additional Failing Instances}
+
+The same failure occurs for a broader family of non-real complex constants. In each case below, SymPy collapses \(\operatorname{sign}(z)^2\) to \(1\), while the complex-sign definition gives \(z^2/\operatorname{Abs}(z)^2\). Since each listed \(z\) is nonzero and non-real, the expected behavior follows from the same unit-direction identity rather than from a special property of the representative value \(1+i\).
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.44\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\operatorname{sign}(1+i)^2\) & \(1\) & \(i\) \\
+\(\operatorname{sign}(1+2i)^2\) & \(1\) & \((-3+4i)/5\) \\
+\(\operatorname{sign}(2+i)^2\) & \(1\) & \((3+4i)/5\) \\
+\(\operatorname{sign}(-1+i)^2\) & \(1\) & \(-i\) \\
+\(\operatorname{sign}(2-i)^2\) & \(1\) & \((3-4i)/5\) \\
+\(\operatorname{sign}(3/5+i/7)^2\) & \(1\) & \((208+105i)/233\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check. The closest related public material found was SymPy's elementary-functions documentation, which confirms that complex \(\operatorname{sign}\) denotes a unit complex direction, and a Stack Overflow discussion about a \texttt{gruntz}/limit failure involving \(\operatorname{sign}\) of a complex expression. Those are related to complex-sign handling in general, but they do not describe \texttt{sign(1 + I)**2} returning \(1\), the overbroad \texttt{sign.\_eval\_power} shortcut, or this exact algebraic simplification failure. The deduplication verdict is a new instance of a known failure mode: complex-sign handling has related public precedent, but this exact reproducible even-power collapse appears previously unreported and remains individually actionable as a SymPy issue and regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+
+from sympy import Abs, I, N, Rational, sign
+
+
+CASES = [
+    1 + I,
+    1 + 2 * I,
+    2 + I,
+    -1 + I,
+    2 - I,
+    Rational(3, 5) + I / 7,
+]
+
+
+@pytest.mark.parametrize("z", CASES)
+def test_even_power_of_complex_sign_uses_complex_direction(z):
+    actual = sign(z) ** 2
+    expected = z ** 2 / Abs(z) ** 2
+
+    assert abs(complex(N(actual, 80)) - complex(N(expected, 80))) < 1e-45
+\end{lstlisting}
+
+\end{document}

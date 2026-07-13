@@ -1,0 +1,78 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 34: Branch Cut Error in Radical Solving}
+
+\begin{counterexamplebox}
+\textbf{Task.} Solve the principal-square-root equation over the complex domain:
+\[
+    \sqrt{1/x} = \frac{1}{\sqrt{x}}.
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+    \operatorname{solveset}\!\left(\sqrt{1/x}=1/\sqrt{x},\,x,\,\mathbb{C}\right)
+    = \mathbb{C}\setminus\{0\}.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+    \mathbb{C}\setminus(-\infty,0].
+\]
+
+\medskip
+\textbf{Explanation.} Substituting \(x=-1\) gives
+\(\sqrt{1/(-1)}=i\), but \(1/\sqrt{-1}=1/i=-i\). Thus the residual is \(2i\), so the negative real values included by \SymPy{} are not solutions.
+
+\medskip
+\textbf{Likely root cause.} The diagnosis traces the result through \texttt{\_solve\_radical} in \nolinkurl{sympy/solvers/solveset.py}: radical removal turns the checked equation into a broad infinite complement, and that complement is not rechecked against the original branch-sensitive equation. This is a new instance of a known failure mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-034-branch-cut-error-in-radical-solving}
+\end{counterexamplebox}
+
+\end{document}

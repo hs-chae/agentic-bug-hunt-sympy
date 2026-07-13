@@ -1,0 +1,213 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 48: Core algebraic identities erase incomplete Piecewise undefined branches}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import Eq, Piecewise, symbols
+
+x = symbols("x", real=True)
+p = Piecewise((1, x > 0))
+
+print("p.subs(x, -1) =", p.subs(x, -1))
+print("(p*0).subs(x, -1) =", (p * 0).subs(x, -1))
+print("(p-p).subs(x, -1) =", (p - p).subs(x, -1))
+print("Eq(p, p).subs(x, -1) =", Eq(p, p).subs(x, -1))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+p.subs(x, -1) = nan
+(p*0).subs(x, -1) = 0
+(p-p).subs(x, -1) = 0
+Eq(p, p).subs(x, -1) = True
+\end{lstlisting}
+
+SymPy correctly exposes the missing branch of the original incomplete
+\texttt{Piecewise} as \texttt{nan} at \(x=-1\).  However, after applying core
+algebraic identities, the same undefined point is converted into total finite
+information: \(0\), \(0\), and \(\mathrm{True}\).
+
+\subsection{Expected Behavior}
+
+The undefined behavior of the incomplete \texttt{Piecewise} should be preserved,
+or the simplifying identities should be withheld where they would erase the
+implicit undefined region.  In particular, at \(x=-1\),
+\((p\cdot 0)\) and \(p-p\) should still evaluate to \(\mathrm{NaN}\), and
+\(\operatorname{Eq}(p,p)\) should not evaluate to unconditional truth.
+
+\subsection{Mathematical Explanation}
+
+The expression
+\[
+  p(x) = \begin{cases}
+    1, & x > 0
+  \end{cases}
+\]
+has no branch for \(x \leq 0\).  SymPy's own evaluation semantics therefore make
+\(p(-1)\) undefined, represented by \(\mathrm{NaN}\).
+
+The identities \(z\cdot 0=0\), \(z-z=0\), and \(z=z\) are valid for ordinary
+finite values \(z\), but they are not pointwise valid when \(z\) is undefined.
+At the test point, the relevant value is \(z=p(-1)=\mathrm{NaN}\).  An
+undefined value multiplied by zero is still undefined, subtracting an undefined
+value from itself is still undefined, and equality of two undefined evaluations
+is not a proof of pointwise truth.  Thus the returned results are not merely
+alternate representations of the same partial function; they extend the domain
+and assert concrete values on a point where the original expression has no
+finite value.
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis identifies the responsible behavior in SymPy's generic core
+simplification layer.  The incomplete \texttt{Piecewise} is constructed in
+\nolinkurl{sympy/functions/elementary/piecewise.py}; because it has no final
+\texttt{True} branch, it remains partial, and the missing-branch behavior is
+documented as evaluation to \(\mathrm{NaN}\).  The traced call path then sends
+\texttt{p*0} through multiplication simplification in
+\nolinkurl{sympy/core/mul.py}, \texttt{p-p} through term combination in
+\nolinkurl{sympy/core/add.py} and \nolinkurl{sympy/core/mul.py}, and
+\texttt{Eq(p, p)} through \texttt{Equality.\_\_new\_\_} in
+\nolinkurl{sympy/core/relational.py}.
+
+For multiplication, the diagnosis points especially to
+\nolinkurl{sympy/core/mul.py} around lines 529--535, where collected factors
+with zero exponent are discarded according to the ordinary rule \(x^0\mapsto 1\)
+and related canonicalization can collapse a product with numeric zero to the
+scalar \(0\).  For equality, it points to
+\nolinkurl{sympy/core/relational.py} around lines 625--634, where structurally
+identical operands are evaluated through \texttt{is\_eq} and become
+\texttt{True}.  These rules are sound for total finite expressions, but they do
+not check whether an operand may be partial because it contains an incomplete
+\texttt{Piecewise}.
+
+Consequently, the simplifier removes the expression whose evaluation would have
+reached the implicit \(\mathrm{NaN}\) branch.  Substitution after simplification
+therefore sees only a scalar \(0\) or unconditional truth, rather than the
+original partial expression.  A plausible fix direction, supported by the
+diagnosis, is for core identity simplifications that collapse expressions
+containing incomplete \texttt{Piecewise} objects to preserve the undefined
+condition explicitly, for example as a \texttt{Piecewise}, or to decline the
+simplification when the operand can evaluate to \(\mathrm{NaN}\) on part of its
+domain.
+
+\subsection{Additional Failing Instances}
+
+The independent verification covers the family
+\[
+  p_a(x)=\begin{cases}
+    a+1, & x>a
+  \end{cases}
+  \qquad\text{evaluated at}\qquad x=a-1,
+\]
+for \(a=0,1,2,3,4,5\).  In every case, \(a-1\) lies outside the covered branch,
+so the original expression is undefined there.  The expected behavior is the
+same across the family because the algebraic identities are being applied to an
+undefined value, not to an ordinary finite value.
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.42\linewidth}>{\raggedright\arraybackslash}p{0.25\linewidth}>{\raggedright\arraybackslash}p{0.25\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(a=0\): \(p=\operatorname{Piecewise}((1,x>0))\), evaluate at \(x=-1\) &
+\(p=\mathrm{NaN}\), but \(p\cdot0=0\), \(p-p=0\), \(\operatorname{Eq}(p,p)=\mathrm{True}\) &
+\(p\cdot0=\mathrm{NaN}\), \(p-p=\mathrm{NaN}\), equality not \(\mathrm{True}\) \\
+\(a=1\): \(p=\operatorname{Piecewise}((2,x>1))\), evaluate at \(x=0\) &
+\(p=\mathrm{NaN}\), but \(p\cdot0=0\), \(p-p=0\), \(\operatorname{Eq}(p,p)=\mathrm{True}\) &
+\(p\cdot0=\mathrm{NaN}\), \(p-p=\mathrm{NaN}\), equality not \(\mathrm{True}\) \\
+\(a=2\): \(p=\operatorname{Piecewise}((3,x>2))\), evaluate at \(x=1\) &
+\(p=\mathrm{NaN}\), but \(p\cdot0=0\), \(p-p=0\), \(\operatorname{Eq}(p,p)=\mathrm{True}\) &
+\(p\cdot0=\mathrm{NaN}\), \(p-p=\mathrm{NaN}\), equality not \(\mathrm{True}\) \\
+\(a=3\): \(p=\operatorname{Piecewise}((4,x>3))\), evaluate at \(x=2\) &
+\(p=\mathrm{NaN}\), but \(p\cdot0=0\), \(p-p=0\), \(\operatorname{Eq}(p,p)=\mathrm{True}\) &
+\(p\cdot0=\mathrm{NaN}\), \(p-p=\mathrm{NaN}\), equality not \(\mathrm{True}\) \\
+\(a=4\): \(p=\operatorname{Piecewise}((5,x>4))\), evaluate at \(x=3\) &
+\(p=\mathrm{NaN}\), but \(p\cdot0=0\), \(p-p=0\), \(\operatorname{Eq}(p,p)=\mathrm{True}\) &
+\(p\cdot0=\mathrm{NaN}\), \(p-p=\mathrm{NaN}\), equality not \(\mathrm{True}\) \\
+\(a=5\): \(p=\operatorname{Piecewise}((6,x>5))\), evaluate at \(x=4\) &
+\(p=\mathrm{NaN}\), but \(p\cdot0=0\), \(p-p=0\), \(\operatorname{Eq}(p,p)=\mathrm{True}\) &
+\(p\cdot0=\mathrm{NaN}\), \(p-p=\mathrm{NaN}\), equality not \(\mathrm{True}\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The available deduplication evidence lists PR \#29518 and issues \#21385 and
+\#17438 as related public material.  The artifact does not identify a clear
+public duplicate of this exact incomplete-\texttt{Piecewise} counterexample;
+instead, its verdict is that this is a new instance of a known failure mode.
+That framing is still individually actionable: the general risk around
+piecewise domains and simplification may be broadly understood, but this exact
+reproducible case exposes a concrete regression-test target for core algebraic
+identities and relational simplification.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+
+from sympy import Eq, Piecewise, S, symbols
+
+
+@pytest.mark.parametrize("a", [0, 1, 2, 3, 4, 5])
+def test_incomplete_piecewise_undefined_branch_survives_core_identities(a):
+    x = symbols("x", real=True)
+    p = Piecewise((a + 1, x > a))
+    bad_point = a - 1
+
+    assert p.subs(x, bad_point) is S.NaN
+    assert (p * 0).subs(x, bad_point) is S.NaN
+    assert (p - p).subs(x, bad_point) is S.NaN
+    assert Eq(p, p).subs(x, bad_point) is not S.true
+\end{lstlisting}
+
+\end{document}

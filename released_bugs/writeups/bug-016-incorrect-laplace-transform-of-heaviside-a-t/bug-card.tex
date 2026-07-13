@@ -1,0 +1,82 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 16: incorrect Laplace transform of \texorpdfstring{$\operatorname{Heaviside}(a-t)$}{Heaviside(a - t)}}
+
+\begin{counterexamplebox}
+\textbf{Task.} Compute the Laplace transform of a closing step with real cutoff \(a\).
+\[
+\mathcal{L}\{\operatorname{Heaviside}(a-t)\}(s), \qquad a\in\mathbb{R},\ s>0.
+\]
+
+\medskip
+\textbf{SymPy's answer for symbolic \(a\).}
+\[
+\mathcal{L}_{\SymPy}\{\operatorname{Heaviside}(a-t)\}(s)
+=\frac{e^{-as}}{s}.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+\mathcal{L}\{\operatorname{Heaviside}(a-t)\}(s)
+=
+\begin{cases}
+\dfrac{1-e^{-as}}{s}, & a>0,\\[6pt]
+0, & a\leq 0.
+\end{cases}
+\]
+
+\medskip
+\textbf{Explanation.} The Laplace integral runs over \([0,\infty)\): this step contributes on \([0,a)\) when \(a>0\), and on no interval when \(a\leq 0\).  That gives the piecewise result above, not \(e^{-as}/s\).
+
+\medskip
+\textbf{Likely root cause.} In \nolinkurl{sympy/integrals/laplace.py}, the symbolic path returns \(e^{-as}/s\) guarded by the impossible condition \((a>0)\wedge(a<0)\wedge\operatorname{Ne}(1/a,0)\); \texttt{noconds=True} discards that guard.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-016-incorrect-laplace-transform-of-heaviside-a-t}
+\end{counterexamplebox}
+
+\end{document}

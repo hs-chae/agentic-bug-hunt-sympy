@@ -1,0 +1,206 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 56: Singularities misses loggamma pole at zero}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import S, limit, loggamma, symbols
+from sympy.calculus.singularities import singularities
+
+x = symbols("x")
+s = singularities(loggamma(x), x, S.Complexes)
+print("singularities:", s)
+print("contains 0:", s.contains(0))
+print("loggamma(0):", loggamma(0))
+print("limit at 0:", limit(loggamma(x), x, 0, dir="+"))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+SymPy version: 1.14.0
+singularities: EmptySet
+contains 0: False
+loggamma(0): oo
+limit at 0: oo
+\end{lstlisting}
+
+The singularity detector reports \texttt{EmptySet}, so it claims that no
+singular point exists in the requested complex domain. This contradicts
+SymPy's own evaluation of \texttt{loggamma(0)} as \texttt{oo} and its computed
+one-sided limit at zero.
+
+\subsection{Expected Behavior}
+
+The result of the singularity query for \(\operatorname{loggamma}(x)\) over
+\(\mathbb{C}\) should contain \(0\). More generally,
+\(\operatorname{loggamma}(x)\) has singularities at the nonpositive integers, so
+a correct singularity set must include
+\[
+    \{0, -1, -2, -3, \ldots\}.
+\]
+For the minimal reproducer, the essential correctness requirement is that
+\texttt{s.contains(0)} evaluate to \texttt{S.true}.
+
+\subsection{Mathematical Explanation}
+
+The function \(\operatorname{loggamma}(z)\) is the logarithm of the analytic
+continuation of \(\Gamma(z)\). The gamma function has simple poles at every
+nonpositive integer:
+\[
+    z \in \{0, -1, -2, \ldots\}.
+\]
+Consequently, \(\operatorname{loggamma}(z)\) diverges at those points. At the
+representative point \(z=0\), the recorded check gives
+\[
+    \operatorname{loggamma}(0) = \infty,
+    \qquad
+    \lim_{x \to 0^+} \operatorname{loggamma}(x) = \infty.
+\]
+Returning \(\varnothing\) is therefore not an equivalent representation or a
+branch-choice issue; it omits an actual singular point. Any singularity set for
+\(\operatorname{loggamma}(x)\) over the complex domain that does not contain
+\(0\) is mathematically incomplete.
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis identifies the false negative in the implementation of
+\texttt{singularities} around lines 94--108 of
+\nolinkurl{sympy/calculus/singularities.py}. The public call enters
+\texttt{singularities}; the expression remains structurally represented as
+\(\operatorname{loggamma}(x)\) and is not rewritten into \(\log(\Gamma(x))\).
+The detector then scans only a fixed set of elementary structural patterns, such
+as negative powers and atoms of \texttt{log}, \texttt{asech}, and
+\texttt{acsch}. Because \(\operatorname{loggamma}(x)\) is neither a
+\texttt{Pow} atom nor a \texttt{log} atom, none of these scans contributes a
+singular point and the initially empty set is returned unchanged.
+
+\begin{lstlisting}[style=bugpython]
+for i in expression.atoms(log, asech, acsch):
+    sings += solveset(i.args[0], symbol, domain)
+...
+return sings
+\end{lstlisting}
+
+The relevant special-function behavior is already present around lines 979--984
+of the following source file:
+\begin{center}
+  \nolinkurl{sympy/functions/special/gamma_functions.py}
+\end{center}
+In that file, \texttt{loggamma.eval} evaluates nonpositive integer inputs to
+\texttt{oo}. The problem is that the singularity routine never queries that
+special-function knowledge and does not have an explicit
+\(\operatorname{loggamma}\) case. A plausible fix direction, supported by the
+diagnosis, is to add explicit handling for \(\operatorname{loggamma}\) arguments
+whose value is a nonpositive integer, or more generally to let the singularity
+routine consult function-specific singularity hooks instead of relying only on a
+fixed structural list.
+
+\subsection{Additional Failing Instances}
+
+The independent verification checks the shifted family
+\(\operatorname{loggamma}(x-a)\) for \(a=0,1,2,3,4,5\). In each case, the
+argument \(x-a\) becomes \(0\) at \(x=a\), so the same gamma-function pole
+implies that \(x=a\) must be included in the singularity set. The buggy behavior
+misses that point throughout the family.
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.44\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\operatorname{singularities}(\operatorname{loggamma}(x), x, \mathbb{C})\) &
+does not contain \(0\) & contains \(0\) \\
+\(\operatorname{singularities}(\operatorname{loggamma}(x-1), x, \mathbb{C})\) &
+does not contain \(1\) & contains \(1\) \\
+\(\operatorname{singularities}(\operatorname{loggamma}(x-2), x, \mathbb{C})\) &
+does not contain \(2\) & contains \(2\) \\
+\(\operatorname{singularities}(\operatorname{loggamma}(x-3), x, \mathbb{C})\) &
+does not contain \(3\) & contains \(3\) \\
+\(\operatorname{singularities}(\operatorname{loggamma}(x-4), x, \mathbb{C})\) &
+does not contain \(4\) & contains \(4\) \\
+\(\operatorname{singularities}(\operatorname{loggamma}(x-5), x, \mathbb{C})\) &
+does not contain \(5\) & contains \(5\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The independent check also evaluates \(\log(\Gamma(\varepsilon))\) numerically
+for a very small positive \(\varepsilon\), confirming the divergent behavior
+near the pole independently of the symbolic singularity detector.
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check and
+classified this as a new failure mode with no public precedent. The closest
+related public items concern other \texttt{loggamma} behavior, including
+\texttt{lambdify(loggamma(...))}, \texttt{loggamma.\_eval\_is\_real}, and
+series or asymptotic behavior, but the artifact identifies no clear duplicate
+for \texttt{singularities(loggamma(x), x, S.Complexes)} returning
+\texttt{EmptySet}. The broader limitation that \texttt{singularities} supports
+only selected structural forms is related, but this exact false negative is
+individually actionable as a focused regression test and fix.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+
+from sympy import S, loggamma, symbols
+from sympy.calculus.singularities import singularities
+
+
+@pytest.mark.parametrize("a", [0, 1, 2, 3, 4, 5])
+def test_singularities_loggamma_contains_shifted_zero(a):
+    x = symbols("x")
+    s = singularities(loggamma(x - a), x, S.Complexes)
+    assert s.contains(a) is S.true
+\end{lstlisting}
+
+\end{document}

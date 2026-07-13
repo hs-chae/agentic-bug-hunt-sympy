@@ -1,0 +1,76 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 4: real antiderivative gains an imaginary term}
+
+\begin{counterexamplebox}
+\textbf{Task.} Compute an indefinite integral and check that it differentiates back:
+\[
+\int \frac{\log x}{x^2-1}\,dx.
+\]
+
+\medskip
+\textbf{SymPy's answer.} \(\SymPy\) returns an expression \(F\) for which
+\[
+F'(2) = \frac{\log 2}{3}-\frac{\pi i}{2}.
+\]
+
+\medskip
+\textbf{Correct answer.} A valid local antiderivative must satisfy 
+\[
+F'(2)= \frac{\log 2}{3}
+\]
+
+\medskip
+\textbf{Explanation.} The integrand \(\log(x)/(x^2-1)\) is real and analytic near \(x=2\). An additive integration constant would vanish under differentiation, so the nonzero residual \(-\pi i/2\) is an erroneous branch term in the derivative, not an equivalent antiderivative representation.
+
+\medskip
+\textbf{Likely root cause.} The diagnosis locates the failure in \nolinkurl{sympy/integrals/meijerint.py}: integration by parts delegates \(\int \log(x-1)/x\,dx\) to Meijer integration, whose shifted-log rewrite selects a branch that differentiates to \(\log(x-1)/x+i\pi/x\). This is a new instance of a known failure mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-004-real-antiderivative-gains-an-imaginary-term}
+\end{counterexamplebox}
+
+\end{document}

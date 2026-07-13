@@ -1,0 +1,191 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\date{}
+
+\begin{document}
+
+\author{}
+\maketitle
+
+\section{Bug 18: \texttt{sinh} Falsely Evaluates a Nonzero Split Imaginary-Period Argument to Zero}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import I, pi, simplify, sinh
+
+expr = sinh(I*pi + I*(pi - 1))
+combined = sinh(I*(2*pi - 1))
+
+print("sinh(I*pi + I*(pi - 1)) =", expr)
+print("sinh(I*(2*pi - 1)) =", combined)
+print("difference =", simplify(expr - combined))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+sinh(I*pi + I*(pi - 1)) = 0
+sinh(I*(2*pi - 1)) = -I*sin(1)
+difference = I*sin(1)
+cmath expected = -0.8414709848078966j
+\end{lstlisting}
+
+SymPy evaluates the split argument to zero even though the algebraically combined
+argument evaluates to \(-I\sin(1)\). The recorded numerical oracle is also
+nonzero, so this is not merely a different but equivalent symbolic form.
+
+\subsection{Expected Behavior}
+
+The expression \(\sinh(I\pi + I(\pi - 1))\) should evaluate to
+\(-I\sin(1)\), with numerical value approximately
+\(-0.8414709848078965\,I\). Equivalently, it should agree with
+\(\sinh(I(2\pi - 1))\).
+
+\subsection{Mathematical Explanation}
+
+The two arguments are identical:
+\[
+  I\pi + I(\pi - 1) = I(2\pi - 1).
+\]
+For real \(t\), the identity \(\sinh(It)=I\sin(t)\) gives
+\[
+  \sinh(I(2\pi - 1)) = I\sin(2\pi - 1) = -I\sin(1).
+\]
+Since \(\sin(1) \ne 0\), the correct value is nonzero. The function
+\(\sinh\) is entire, so there is no branch convention or missing integration
+constant that could make the split expression evaluate to zero while the
+combined expression evaluates to \(-I\sin(1)\).
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis identifies the relevant source locations as follows.
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.58\linewidth}>{\raggedright\arraybackslash}p{0.32\linewidth}@{}}
+\toprule
+\textbf{File} & \textbf{Relevant function or helper} \\
+\midrule
+\nolinkurl{sympy/functions/elementary/hyperbolic.py} & \texttt{sinh.eval}, lines 189--208 \\
+\nolinkurl{sympy/functions/elementary/trigonometric.py} & \texttt{sin.eval}, lines 301--382 \\
+\nolinkurl{sympy/functions/elementary/trigonometric.py} & \texttt{\_peeloff\_pi}, lines 154--159 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The traced call path starts in \texttt{sinh.eval}. SymPy extracts the
+coefficient of \(I\) with \nolinkurl{_imaginary_unit_as_coefficient} and
+rewrites the call as \(I\sin(\texttt{i\_coeff})\). For the unevaluated split
+argument, that coefficient is the addend structure \(({-1}+\pi)+\pi\). Then
+\texttt{sin.eval} calls \texttt{\_peeloff\_pi}.
+
+The source-level issue is in \texttt{\_peeloff\_pi}. The helper iterates over
+\texttt{Add.make\_args(arg)} and uses \texttt{a.coeff(pi)} to remove rational
+multiples of \(\pi\). For the nested addend \(-1+\pi\),
+\texttt{a.coeff(pi)} is \(1\). The diagnosis reports that this increments the
+peeled \(\pi\)-coefficient but fails to preserve the non-\(\pi\) remainder
+\(-1\) in the residual terms.
+
+As a result, the argument \(\pi+(\pi-1)\) is treated as the exact multiple
+\(2\pi\). The downstream trigonometric simplification evaluates
+\(\sin(2\pi)\) to zero, and the hyperbolic rewrite propagates this as
+\(\sinh(I\pi+I(\pi-1)) = I\cdot 0 = 0\). A plausible fix direction supported
+by the diagnosis is to peel a \(\pi\) multiple from an addend only when the
+whole addend is a pure rational multiple of \(\pi\), or otherwise subtract the
+peeled multiple and keep any nonzero remainder in the residual terms.
+
+\subsection{Additional Failing Instances}
+
+The independent verification checks the family
+\[
+  \sinh(I\pi + I(\pi-k)), \qquad k \in \{1,2,3,4,5,6\}.
+\]
+For every listed integer offset, the same identity applies:
+\[
+  \sinh(I\pi + I(\pi-k))=\sinh(I(2\pi-k))
+  = I\sin(2\pi-k) = -I\sin(k).
+\]
+The expected value is therefore nonzero for these integer offsets, but the
+dropped-remainder mechanism makes the split argument look like an exact
+\(2\pi\) trigonometric argument.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.44\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\sinh(I\pi+I(\pi-1))\) & \(0\) & \(-I\sin(1)\) \\
+\(\sinh(I\pi+I(\pi-2))\) & \(0\) & \(-I\sin(2)\) \\
+\(\sinh(I\pi+I(\pi-3))\) & \(0\) & \(-I\sin(3)\) \\
+\(\sinh(I\pi+I(\pi-4))\) & \(0\) & \(-I\sin(4)\) \\
+\(\sinh(I\pi+I(\pi-5))\) & \(0\) & \(-I\sin(5)\) \\
+\(\sinh(I\pi+I(\pi-6))\) & \(0\) & \(-I\sin(6)\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check. The closest
+related public issues involve trigonometric periodicity and the same
+\texttt{\_peeloff\_pi} helper: SymPy issue \#12328 discusses
+\texttt{\_peeloff\_pi} in a assumptions-metadata case involving
+\(\sin(m\pi+\pi)\), while issue \#17976 concerns incomplete periodic
+simplification such as \(\sin(2n\pi+4)\). These are related at the subsystem
+level but do not report the exact split imaginary-period reproducer, the wrong
+zero result, or the dropped non-\(\pi\) remainder from \(\pi-1\). The
+deduplication verdict is therefore a new instance of a known failure mode, and
+the concrete reproducer remains individually actionable as a SymPy issue and
+regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+
+from sympy import I, pi, simplify, sin, sinh
+
+
+@pytest.mark.parametrize("offset", [1, 2, 3, 4, 5, 6])
+def test_sinh_split_imaginary_period_preserves_remainder(offset):
+    assert simplify(sinh(I*pi + I*(pi - offset)) + I*sin(offset)) == 0
+\end{lstlisting}
+
+\end{document}

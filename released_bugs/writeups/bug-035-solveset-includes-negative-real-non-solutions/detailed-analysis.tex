@@ -1,0 +1,218 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 35: solveset includes negative real non-solutions for a reciprocal square-root equation}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import Eq, S, sqrt, solveset, symbols
+
+x = symbols("x")
+lhs = sqrt(x) * sqrt(1/x)
+sol = solveset(Eq(lhs, 1), x, domain=S.Complexes)
+
+print("solution:", sol)
+print("contains -1:", sol.contains(S.NegativeOne))
+print("lhs at -1:", lhs.subs(x, -1))
+print("rhs:", S.One)
+print("residual at -1:", (lhs - 1).subs(x, -1))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+SymPy version: 1.14.0
+solution: Complement(Complexes, {0})
+contains -1: True
+lhs at -1: -1
+rhs: 1
+residual at -1: -2
+\end{lstlisting}
+
+SymPy reports that every nonzero complex number satisfies
+\(\sqrt{x}\sqrt{1/x}=1\). In particular, the returned set contains \(x=-1\),
+even though direct substitution gives \(\sqrt{-1}\sqrt{-1}=-1\), not \(1\).
+Thus the returned set contains a concrete value for which the original equation
+is false.
+
+\subsection{Expected Behavior}
+
+The solution set over the principal complex square root should exclude \(0\) and
+the negative real axis. Equivalently, \(-1\) and the other negative real
+instances below must not be included. A conservative solver result would also be
+acceptable if it preserved the original radical condition instead of returning
+the unchecked superset \(\mathbb{C}\setminus\{0\}\).
+
+\subsection{Mathematical Explanation}
+
+SymPy uses the principal complex square root. Principal square roots are not
+multiplicative across the negative real branch cut, so
+\[
+  \sqrt{x}\sqrt{1/x} = \sqrt{x(1/x)}
+\]
+is not a valid identity for arbitrary complex \(x\). At the representative
+counterexample,
+\[
+  \sqrt{-1}\sqrt{1/(-1)}
+    = \sqrt{-1}\sqrt{-1}
+    = i\cdot i
+    = -1 \ne 1.
+\]
+
+More generally, write \(x=r e^{i\theta}\) using the principal argument
+\(\theta\in(-\pi,\pi]\). For \(\theta\in(-\pi,\pi)\), the reciprocal has
+argument \(-\theta\), and the product of the principal square roots is \(1\).
+For a negative real \(x\), however, \(\theta=\pi\) and \(1/x\) is again negative
+real, so both principal square roots have argument \(\pi/2\), and their product
+has argument \(\pi\). The product is therefore \(-1\), not \(1\). The observed
+answer is not a harmless alternate representation: it includes values that make
+the original equation false.
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis identifies the relevant source file as
+\nolinkurl{sympy/solvers/solveset.py}. The affected function is
+\texttt{\_solve\_radical}, including its local candidate-checking logic. The
+traced call path is: \texttt{solveset} rewrites the equation as
+\(\sqrt{x}\sqrt{1/x}-1\); the direct inverter cannot solve the radical product;
+\texttt{\_solveset} calls \texttt{unrad}; and then
+\texttt{\_solve\_radical} processes the radical-free result.
+
+For this input, \texttt{unrad} applied to \(\sqrt{x}\sqrt{1/x}-1\) returns the
+superset equation \texttt{(0, [])}, because squaring the radical product gives
+\(x(1/x)-1=0\). After denominator removal, this becomes
+\(\mathbb{C}\setminus\{0\}\). The root-cause note locates the responsible
+fallback in \texttt{\_solve\_radical}: finite candidate sets are checked against
+the original equation, but broad non-finite sets are returned unchanged.
+
+\begin{lstlisting}[style=bugpython]
+else:
+    # XXX: There should be more cases checked here.
+    return solutions
+\end{lstlisting}
+
+This behavior is unsafe for radical elimination because \texttt{unrad} can
+produce a superset of the true solution set. In this case, the superset is valid
+only after adding the missing principal-branch restriction. Since the infinite
+candidate set is not validated against the original radical equation, negative
+real non-solutions such as \(-1\) remain in the final result. The supported fix
+direction is to avoid returning infinite radical-removal solution sets as final
+answers unless the original equation has been enforced; a conservative result
+could be a \texttt{ConditionSet} over the candidate set, while a more complete
+fix would derive and subtract the principal-branch failure set.
+
+\subsection{Additional Failing Instances}
+
+The independent verification checks the representative value and five additional
+negative real values. In each case, SymPy's returned
+\(\mathbb{C}\setminus\{0\}\) contains the value, while direct substitution into
+the original equation gives residual \(-2\). The same reasoning applies across
+the family: for every negative real \(x\), both \(x\) and \(1/x\) lie on the
+principal square-root branch cut, so the product of the two principal square
+roots is \(-1\), not \(1\).
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.44\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(x=-1\), \(\sqrt{x}\sqrt{1/x}=-1\) & Included; residual \(-2\) & Excluded \\
+\(x=-2\), \(\sqrt{x}\sqrt{1/x}=-1\) & Included; residual \(-2\) & Excluded \\
+\(x=-3\), \(\sqrt{x}\sqrt{1/x}=-1\) & Included; residual \(-2\) & Excluded \\
+\(x=-\frac{1}{2}\), \(\sqrt{x}\sqrt{1/x}=-1\) & Included; residual \(-2\) & Excluded \\
+\(x=-5\), \(\sqrt{x}\sqrt{1/x}=-1\) & Included; residual \(-2\) & Excluded \\
+\(x=-\frac{7}{3}\), \(\sqrt{x}\sqrt{1/x}=-1\) & Included; residual \(-2\) & Excluded \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check. The closest
+public material documents the same mathematical family: SymPy's square-root
+documentation discusses principal-square-root behavior, SymPy's solveset
+documentation describes returning the set where an equation is true, and public
+math discussions cover failures of identities such as
+\(\sqrt{xy}=\sqrt{x}\sqrt{y}\) across branch cuts. The artifact found no public
+issue, pull request, release note, Stack Overflow report, or mailing-list
+discussion for this exact \texttt{solveset} equation returning
+\(\mathbb{C}\setminus\{0\}\). The deduplication verdict is therefore a new
+instance of a known failure mode: the general branch-cut issue is understood,
+but this exact reproducible solver result is previously unreported and remains
+individually actionable as an issue and regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+
+from sympy import Eq, Rational, S, simplify, sqrt, solveset, symbols
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    [
+        S.NegativeOne,
+        S(-2),
+        S(-3),
+        Rational(-1, 2),
+        S(-5),
+        Rational(-7, 3),
+    ],
+)
+def test_solveset_sqrt_x_sqrt_reciprocal_excludes_negative_real_axis(bad_value):
+    x = symbols("x")
+    lhs = sqrt(x) * sqrt(1/x)
+
+    sol = solveset(Eq(lhs, 1), x, domain=S.Complexes)
+
+    assert sol.contains(bad_value) is S.false
+    assert simplify((lhs - 1).subs(x, bad_value)) != 0
+\end{lstlisting}
+
+\end{document}

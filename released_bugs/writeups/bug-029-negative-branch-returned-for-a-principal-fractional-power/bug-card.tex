@@ -1,0 +1,80 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 29: Negative branch returned for a principal fractional power}
+
+\begin{counterexamplebox}
+\textbf{Task.} Solve over the real domain:
+\[
+    x^{2/3}=4.
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+    \operatorname{solveset}(x^{2/3}=4,\ x,\ \mathbb{R})=\{-8,8\}.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+    \{8\}.
+\]
+
+\medskip
+\textbf{Explanation.} The returned value \(-8\) does not satisfy the original SymPy expression: under principal-power semantics,
+\[
+    (-8)^{2/3}=4(-1)^{2/3}=-2+2\sqrt{3}\,i \ne 4.
+\]
+The negative branch is valid for a real-root interpretation, but not for the principal \texttt{Pow} expression that was solved.
+
+\medskip
+\textbf{Likely root cause.} The diagnosis traces the result to \texttt{\_invert\_real} in \nolinkurl{sympy/solvers/solveset.py}, whose rational-power branch adds both \(y^{3/2}\) and \(-y^{3/2}\) for exponent \(2/3\). That inverts real-root semantics rather than principal \texttt{Pow} semantics, making this a new instance of a known failure mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-029-negative-branch-returned-for-a-principal-fractional-power}
+\end{counterexamplebox}
+
+\end{document}

@@ -1,0 +1,78 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 36: Wrong-Sign Antiderivative on the Negative Real Branch}
+
+\begin{counterexamplebox}
+\textbf{Task.} Compute an indefinite integral:
+\[
+  \int \frac{dx}{x\sqrt{x^2+1}}.
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+  \operatorname{integrate}\!\left(\frac{1}{x\sqrt{x^2+1}},x\right)
+  =
+  -\operatorname{asinh}\!\left(\frac{1}{x}\right).
+\]
+
+\medskip
+\textbf{Correct answer.} The answer must be branch-correct; on the negative real branch an antiderivative is
+\[
+  \operatorname{asinh}\!\left(\frac{1}{x}\right).
+\]
+
+\medskip
+\textbf{Explanation.} Differentiating SymPy's result gives \(1/(x^2\sqrt{1+x^{-2}})\). At \(x=-2\), this is \(1/(2\sqrt{5})\), but the requested integrand is \(-1/(2\sqrt{5})\). The mismatch comes from losing the sign in \(\sqrt{x^2}=|x|\), so the returned expression is valid only on one real branch.
+
+\medskip
+\textbf{Likely root cause.} In \nolinkurl{sympy/integrals/meijerint.py}, the indefinite Meijer path effectively substitutes through \(x^2\) while an odd \(1/x\) factor is present, then hyperexpands to an unconditional one-branch antiderivative. The deduplication assessment classifies this as a new instance of a known failure mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-036-wrong-sign-antiderivative-on-the-negative-real-branch}
+\end{counterexamplebox}
+
+\end{document}

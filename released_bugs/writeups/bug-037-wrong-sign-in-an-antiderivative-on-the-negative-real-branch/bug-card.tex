@@ -1,0 +1,96 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\date{}
+
+\begin{document}
+
+\author{}
+\maketitle
+
+\section*{Bug 37: Wrong Sign in an Antiderivative on the Negative Real Branch}
+
+\begin{counterexamplebox}
+\textbf{Task.} Compute an antiderivative of the algebraic integrand
+\[
+    \int \dfrac{dx}{x\sqrt{x^2-1}} .
+\]
+
+\medskip
+\textbf{SymPy's answer.} SymPy returns
+\[
+    \operatorname{integrate}\!\left(\dfrac{1}{x\sqrt{x^2-1}},x\right)
+    =
+    \begin{cases}
+    i\,\operatorname{acosh}(1/x), & 1/|x^2|>1,\\
+    -\operatorname{asin}(1/x), & \text{otherwise.}
+    \end{cases}
+\]
+
+\medskip
+\textbf{Correct answer.} On the negative real branch \(x<-1\), the derivative
+of the returned antiderivative should be
+\[
+    \dfrac{1}{x\sqrt{x^2-1}} .
+\]
+
+\medskip
+\textbf{Explanation.} At \(x=-3\), the integrand is approximately
+\(-0.11785113019775792\), but differentiating SymPy's fallback branch
+\(-\operatorname{asin}(1/x)\) gives \(+0.11785113019775792\).  The fallback derivative is
+\(1/(|x|\sqrt{x^2-1})\), which is correct on \(x>1\) but has the opposite sign
+on \(x<-1\).
+
+\medskip
+\textbf{Likely root cause.} The diagnosis narrows the issue to the Meijer-G
+indefinite integration path in \nolinkurl{sympy/integrals/meijerint.py}, where a
+rewrite, hyperexpansion, polar power denesting, and unpolarification sequence
+appears to collapse the \(x>1\) and \(x<-1\) branches into one
+\(-\operatorname{asin}(1/x)\) fallback.  This is a new instance of a known failure mode;
+the same \(\sqrt{x^2-1}\) integration family appears in public issues
+\href{https://github.com/sympy/sympy/issues/20982}{sympy/sympy\#20982}
+(``lost sign when \(x<0\)'') and
+\href{https://github.com/sympy/sympy/issues/23566}{sympy/sympy\#23566}
+(the \(\operatorname{acosh}/\operatorname{asin}\) branch handling), but neither
+reports the exact \(1/(x\sqrt{x^2-1})\) indefinite sign error.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-037-wrong-sign-in-an-antiderivative-on-the-negative-real-branch}
+\end{counterexamplebox}
+
+\end{document}

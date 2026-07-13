@@ -1,0 +1,81 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 6: left limit gives the right-side value}
+
+\begin{counterexamplebox}
+\textbf{Task.} Evaluate \(\lim_{x\to 0^-}p(x)\) of the discontinuous function
+\[
+  p(x)=
+  \begin{cases}
+    0, & x<0,\\
+    1, & x\geq 0.
+  \end{cases}
+\]
+
+
+\medskip
+\textbf{SymPy's answer.} \(1\).
+
+\medskip
+\textbf{Correct answer.} \(0\).
+
+\medskip
+\textbf{Explanation.} For every sufficiently small negative \(x\), the condition
+\(x<0\) is true, so the Piecewise expression is identically \(0\) on the left
+side of the jump.  SymPy returns \(1\), the value of the right branch.
+
+\medskip
+\textbf{Likely root cause.} The diagnosis points to
+\texttt{Piecewise.\_eval\_as\_leading\_term} in
+\nolinkurl{sympy/functions/elementary/piecewise.py}: it receives the approach
+direction \texttt{cdir} but substitutes the boundary value into branch
+conditions instead of using the requested side.  This is a new instance of a known failure mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-006-left-limit-gives-the-right-side-value}
+\end{counterexamplebox}
+
+\end{document}

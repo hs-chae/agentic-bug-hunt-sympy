@@ -1,0 +1,87 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 33: solveset Represents an Unsatisfiable Tangent Equation by Infinities}
+
+\begin{counterexamplebox}
+\textbf{Task.} Solve the complex trigonometric equation
+\[
+\tan(x)=i,\qquad x\in\mathbb{C}.
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+\operatorname{solveset}(\tan(x)=i,\ x,\ \mathbb{C})
+= \operatorname{ImageSet}(\Lambda(\_n,\ \_n\pi+oo\,i),\mathbb{Z}).
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+\varnothing.
+\]
+
+\medskip
+\textbf{Explanation.} For finite \(z\),
+\[
+\tan(z)=-i\,\frac{\exp(2iz)-1}{\exp(2iz)+1}.
+\]
+Setting \(\tan(z)=i\) forces \(\exp(2iz)=0\), impossible for a finite complex
+argument. The returned \(oo\,i\)-valued image set is therefore not a finite
+complex solution family.
+
+\medskip
+\textbf{Likely root cause.} In \nolinkurl{sympy/solvers/solveset.py},
+\texttt{\_invert\_trig\_hyp\_complex} constructs the tangent solution pattern
+\(n\pi+\arctan(a)\) without rejecting non-finite inverse values; here
+\(\arctan(i)\) evaluates to \(oo\,i\). This is a new instance of a known failure
+mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-033-solveset-represents-an-unsatisfiable-tangent-equation-by-inf}
+\end{counterexamplebox}
+
+\end{document}

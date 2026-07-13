@@ -1,0 +1,166 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 46: Matrix.is\_diagonalizable Ignores Eigenvalue-Collision Branch}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import Matrix, symbols
+
+a, b = symbols("a b")
+M = Matrix([[a, 1], [0, b]])
+
+print("is_diagonalizable:", M.is_diagonalizable())
+P, D = M.diagonalize()
+print("P:", P)
+print("D:", D)
+
+M_equal = M.subs(b, a)
+print("specialized matrix:", M_equal)
+print("specialized is_diagonalizable:", M_equal.is_diagonalizable())
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+SymPy version: 1.14.0
+is_diagonalizable: True
+P: Matrix([[1, -1/(a - b)], [0, 1]])
+D: Matrix([[a, 0], [0, b]])
+specialized matrix: Matrix([[a, 1], [0, a]])
+specialized is_diagonalizable: False
+\end{lstlisting}
+
+SymPy reports that the parametric matrix is diagonalizable without qualification. The accompanying diagonalization matrix contains the denominator \(a-b\), and the specialization \(b=a\) is separately recognized by SymPy as non-diagonalizable. Thus the unconditional answer \texttt{True} ignores an exceptional parameter branch on which the stated property fails.
+
+\subsection{Expected Behavior}
+
+The result should be conditional, unknown, or otherwise qualified: for
+\[
+M=\begin{pmatrix}a&1\\0&b\end{pmatrix},
+\]
+the matrix is diagonalizable when \(a\ne b\), but it is not diagonalizable when \(a=b\). An unconditional \texttt{True} from \texttt{M.is\_diagonalizable()} is therefore mathematically incorrect.
+
+\subsection{Mathematical Explanation}
+
+For \(a\ne b\), the upper-triangular matrix has two distinct eigenvalues, \(a\) and \(b\), so it is diagonalizable over a field containing the parameters. The eigenvector reported for the eigenvalue \(b\) is proportional to
+\[
+\begin{pmatrix}-1/(a-b)\\1\end{pmatrix},
+\]
+which is valid only under the side condition \(a-b\ne 0\).
+
+On the collision branch \(b=a\), the same matrix becomes
+\[
+M_{b=a}=\begin{pmatrix}a&1\\0&a\end{pmatrix}
+      = aI+\begin{pmatrix}0&1\\0&0\end{pmatrix}.
+\]
+For the only eigenvalue \(a\),
+\[
+M_{b=a}-aI=\begin{pmatrix}0&1\\0&0\end{pmatrix},
+\]
+whose nullspace is one-dimensional. The algebraic multiplicity of \(a\) is \(2\), but the geometric multiplicity is \(1\), so \(M_{b=a}\) is a nontrivial Jordan block and is not diagonalizable. The generic diagonalization is not an equivalent representation on this branch, because the change-of-basis matrix contains \(1/(a-b)\) and is undefined when \(a=b\).
+
+\subsection{Source-Level Diagnosis}
+
+The relevant source file is \nolinkurl{sympy/matrices/eigen.py}. The diagnosis narrows the issue to its eigenvector and diagonalizability pipeline. The public diagonalizability query dispatches through the \texttt{MatrixBase} method to \texttt{\_is\_diagonalizable}. That routine calls the helper \nolinkurl{_is_diagonalizable_with_eigen}. The same helper is also used by \texttt{diagonalize()} through \texttt{\_diagonalize}, after which the returned eigenvectors are used to build \(P\) and \(D\).
+
+The relevant helper computes \texttt{M.eigenvects(simplify=True)} and then checks each listed eigenvalue entry independently. For the reproducer, \texttt{eigenvects()} reports one eigenvector for eigenvalue \(a\) and one eigenvector for eigenvalue \(b\), with the latter containing the denominator \(a-b\). The check compares each listed eigenvalue's algebraic multiplicity with the number of eigenvectors reported for that listed key. It does not track the condition \(a\ne b\), and it does not revisit the branch where the two symbolic eigenvalue keys collide.
+
+\begin{lstlisting}[style=bugpython]
+(a, 1, [Matrix([[1], [0]])])
+(b, 1, [Matrix([[-1/(a - b)], [1]])])
+\end{lstlisting}
+
+This source-level behavior explains the mathematical failure: the generic eigenspace calculation treats \(a-b\) as invertible, so \texttt{\_is\_diagonalizable\_with\_eigen} accepts a decomposition that is valid only away from the exceptional branch. When \(b=a\), the two eigenvalue entries collapse into a single eigenvalue of algebraic multiplicity \(2\), but the eigenspace has dimension \(1\). The diagnosis identifies a plausible fix direction: symbolic diagonalization should carry parameter conditions from eigenvalue distinctness and from denominators introduced while computing eigenvectors; at minimum, when symbolic eigenvalue equality is undecidable, \texttt{is\_diagonalizable} should avoid returning unconditional \texttt{True} without assumptions such as \(a\ne b\).
+
+\subsection{Additional Failing Instances}
+
+The independent checks exercise the same family with nonzero upper-right entries. For
+\[
+M_c=\begin{pmatrix}a&c\\0&b\end{pmatrix}\quad(c\ne 0),
+\]
+the generic matrix is diagonalizable when \(a\ne b\), but the branch \(b=a\) gives
+\[
+\begin{pmatrix}a&c\\0&a\end{pmatrix},
+\]
+which has a one-dimensional eigenspace for the repeated eigenvalue \(a\). The expected behavior is the same for every nonzero \(c\): SymPy should not return an unconditional \texttt{True} for the parametric matrix while the \(b=a\) specialization is defective.
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.44\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(M=\begin{pmatrix}a&1\\0&b\end{pmatrix}\) & Generic \texttt{True}; specialized \texttt{False} & Not unconditional \texttt{True}; defective at \(b=a\) \\
+\(M=\begin{pmatrix}a&2\\0&b\end{pmatrix}\) & Generic \texttt{True}; specialized \texttt{False} & Not unconditional \texttt{True}; defective at \(b=a\) \\
+\(M=\begin{pmatrix}a&3\\0&b\end{pmatrix}\) & Generic \texttt{True}; specialized \texttt{False} & Not unconditional \texttt{True}; defective at \(b=a\) \\
+\(M=\begin{pmatrix}a&4\\0&b\end{pmatrix}\) & Generic \texttt{True}; specialized \texttt{False} & Not unconditional \texttt{True}; defective at \(b=a\) \\
+\(M=\begin{pmatrix}a&5\\0&b\end{pmatrix}\) & Generic \texttt{True}; specialized \texttt{False} & Not unconditional \texttt{True}; defective at \(b=a\) \\
+\(M=\begin{pmatrix}a&6\\0&b\end{pmatrix}\) & Generic \texttt{True}; specialized \texttt{False} & Not unconditional \texttt{True}; defective at \(b=a\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The best-effort deduplication check found related SymPy documentation and general linear-algebra references describing diagonalizability, the contract for \texttt{diagonalize()}, and non-diagonalizable Jordan-block examples, but it did not identify a public SymPy issue, pull request, Stack Overflow post, mailing-list thread, or release note for this exact \(\begin{pmatrix}a&1\\0&b\end{pmatrix}\) parameter-collision case. The verdict is a new instance of a known failure mode: symbolic computations can be valid on a generic parameter branch while failing on exceptional branches, but this concrete SymPy \texttt{is\_diagonalizable}/\texttt{diagonalize} reproducer appears previously unreported and remains individually actionable as an issue and regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+from sympy import Matrix, symbols
+
+a, b = symbols("a b")
+
+@pytest.mark.parametrize("offdiag", [1, 2, 3, 4, 5, 6])
+def test_is_diagonalizable_does_not_ignore_eigenvalue_collision(offdiag):
+    M = Matrix([[a, offdiag], [0, b]])
+    assert not (M.is_diagonalizable() is True and M.subs(b, a).is_diagonalizable() is False)
+\end{lstlisting}
+
+\end{document}

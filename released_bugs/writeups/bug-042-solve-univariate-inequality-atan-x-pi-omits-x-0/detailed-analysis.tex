@@ -1,0 +1,199 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 42: \texorpdfstring{\texttt{solve\_univariate\_inequality(atan(x) < pi)}}{solve\_univariate\_inequality(atan(x) < pi)} omits \texorpdfstring{\(x=0\)}{x=0}}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import N, S, atan, pi, symbols
+from sympy.solvers.inequalities import solve_univariate_inequality
+
+x = symbols("x")
+sol = solve_univariate_inequality(atan(x) < pi, x, relational=False)
+
+print("solution =", sol)
+print("0 in solution =", S.Zero in sol)
+print("atan(0) < pi evaluates to", atan(S.Zero) < pi)
+print("numeric atan(0) - pi =", N(atan(S.Zero) - pi, 50))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+solution = Union(Interval.open(-oo, 0), Interval.open(0, oo))
+0 in solution = False
+atan(0) < pi evaluates to True
+numeric atan(0) - pi = -3.1415926535897932384626433832795028841971693993751
+\end{lstlisting}
+
+SymPy returns the two punctured open intervals
+\((-\infty,0)\cup(0,\infty)\), so the result explicitly omits \(0\).  The
+same run evaluates the original strict inequality at \(0\) as true, so the
+omitted singleton is not a harmless endpoint convention.
+
+\subsection{Expected Behavior}
+
+The correct solution set is \(S.\mathrm{Reals}\), i.e. all real numbers:
+\[
+  \operatorname{solve\_univariate\_inequality}(\arctan(x)<\pi,x,
+  \mathrm{relational}=\mathrm{False}) = \mathbb{R}.
+\]
+In particular, \(0\) must be included because \(\arctan(0)=0<\pi\).
+
+\subsection{Mathematical Explanation}
+
+For real \(x\), the principal real arctangent satisfies
+\[
+  -\frac{\pi}{2} < \arctan(x) < \frac{\pi}{2}.
+\]
+Since \(\frac{\pi}{2}<\pi\), every real value of \(\arctan(x)\) is strictly
+less than \(\pi\).  Therefore the inequality \(\arctan(x)<\pi\) has no real
+boundary point and no excluded real singleton.
+
+The returned set \((-\infty,0)\cup(0,\infty)\) is not equivalent to
+\(\mathbb{R}\).  It excludes \(x=0\), but direct substitution gives
+\(\arctan(0)=0\), and \(0<\pi\).  Thus the difference is a genuine lost
+solution, not a different representation of the same set.
+
+\subsection{Source-Level Diagnosis}
+
+\begin{sloppypar}
+The diagnosis identifies a downstream interaction between
+\nolinkurl{sympy/solvers/solveset.py} and
+\nolinkurl{sympy/solvers/inequalities.py}.  In the public call shown in the
+minimal reproducer, the inequality solver first rewrites the problem as the
+sign condition for \(\arctan(x)-\pi\).  The periodic shortcut does not apply because the
+expression is not periodic in \(x\), so the solver calls \texttt{solvify} to
+obtain critical equality roots.
+\end{sloppypar}
+
+The traced call path is
+\[
+\texttt{solve\_univariate\_inequality}
+  \;\longrightarrow\; \texttt{solvify}
+  \;\longrightarrow\; \texttt{solveset}.
+\]
+The trace in the diagnosis records
+\texttt{periodicity(atan(x) - pi, x) -> None},
+\texttt{solvify(atan(x) - pi, x, S.Reals) -> [0]}, and
+\texttt{continuous\_domain(atan(x) - pi, x, S.Reals) -> Reals}.
+
+The root cause appears to start in
+\nolinkurl{sympy/solvers/solveset.py} in \texttt{\_invert\_real}, where the
+inverse step accepts \(x=\tan(\pi)=0\) as a solution of
+\(\arctan(x)=\pi\) without checking the principal real range of
+\(\arctan\).  That value is branch-invalid: \(\arctan(0)=0\), not \(\pi\).
+The spurious equality root is then passed to
+\nolinkurl{sympy/solvers/inequalities.py}.  The inequality solver partitions
+the real line at the reported root \(0\), treats it as a genuine strict
+boundary, includes the two neighboring open intervals after sample-point
+testing, and excludes the critical point itself because the relation is
+strict.  In this branch, the original inequality is not used to rescue the
+candidate point \(0\), even though direct evaluation would show that it
+satisfies \(\arctan(x)<\pi\).
+
+A plausible fix direction supported by the diagnosis is to reject
+branch-invalid arctangent inversions in \texttt{\_invert\_real}.  A second
+defensive improvement would be for the inequality solver to validate candidate
+critical points against the original inequality before removing them solely
+because the relation is strict.
+
+\subsection{Additional Failing Instances}
+
+The same failure pattern appears for bounds \(b>\pi/2\) where SymPy obtains a
+branch-invalid equality root from \(\arctan(x)=b\) and then removes that point
+from the strict inequality \(\arctan(x)<b\).  For every such real bound,
+\(\arctan(x)<b\) is true for all real \(x\), so the expected solution is
+\(\mathbb{R}\).  The independent checks use both SymPy's symbolic truth value
+and an independent numerical \texttt{math.atan} comparison at the omitted
+point.
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.38\linewidth}>{\raggedright\arraybackslash}p{0.26\linewidth}>{\raggedright\arraybackslash}p{0.26\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\arctan(x)<\pi\), omitted point \(0\) & Returned set omits \(0\) & \(\mathbb{R}\), including \(0\) \\
+\(\arctan(x)<3\pi/4\), omitted point \(-1\) & Returned set omits \(-1\) & \(\mathbb{R}\), including \(-1\) \\
+\(\arctan(x)<2\pi\), omitted point \(0\) & Returned set omits \(0\) & \(\mathbb{R}\), including \(0\) \\
+\(\arctan(x)<5\pi/4\), omitted point \(1\) & Returned set omits \(1\) & \(\mathbb{R}\), including \(1\) \\
+\(\arctan(x)<10\), omitted point \(\tan(10)\) & Returned set omits \(\tan(10)\) & \(\mathbb{R}\), including \(\tan(10)\) \\
+\(\arctan(x)<3\pi\), omitted point \(0\) & Returned set omits \(0\) & \(\mathbb{R}\), including \(0\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check.  The
+closest public material found was general SymPy solver documentation and
+background references on the principal range of inverse trigonometric
+functions; no public issue, pull request, Stack Overflow report, mailing-list
+thread, or release note was identified for this exact inequality output or for
+omission of \(0\) from \(\arctan(x)<\pi\).  The deduplication verdict is a new
+failure mode with no public precedent.  The bug remains individually
+actionable because it has a small reproducer, a concrete missing solution, a
+localized source-level mechanism, and a focused regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+from sympy import S, atan, pi, symbols, tan
+from sympy.solvers.inequalities import solve_univariate_inequality
+
+
+@pytest.mark.parametrize("bound,point", [(pi, 0), (3*pi/4, -1), (2*pi, 0), (5*pi/4, 1), (10, tan(10)), (3*pi, 0)])
+def test_atan_inequality_keeps_points_that_satisfy_strict_inequality(bound, point):
+    x = symbols("x")
+    sol = solve_univariate_inequality(atan(x) < bound, x, relational=False)
+    assert S(point) in sol
+    assert atan(S(point)) < bound
+\end{lstlisting}
+
+\end{document}

@@ -1,0 +1,83 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 51: False solution for atan2(x, 1) = pi in solveset}
+
+\begin{counterexamplebox}
+\textbf{Task.} Solve the real equation
+\[
+\operatorname{atan2}(x,1)=\pi.
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+\operatorname{solveset}(\operatorname{atan2}(x,1)=\pi,\ x,\mathbb{R})=\{0\}.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+\emptyset.
+\]
+
+\medskip
+\textbf{Explanation.} Substituting the returned value gives
+\(\operatorname{atan2}(0,1)=0\), not \(\pi\). Since the second argument is
+positive, \(\operatorname{atan2}(x,1)=\arctan(x)\), whose real principal range
+is \((-\pi/2,\pi/2)\).
+
+\medskip
+\textbf{Likely root cause.} The diagnosis traces the false positive to
+\SymPy's generic \texttt{\_invert\_real} path in \texttt{solveset}: after
+\(\operatorname{atan2}(x,1)\) simplifies to \(\arctan(x)\), it applies
+\(\tan\) to the out-of-range right-hand side \(\pi\) without enforcing
+\(\arctan\)'s range. This is a new instance of a known failure mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-051-false-solution-for-atan2-x-1-pi-in-solveset}
+\end{counterexamplebox}
+
+\end{document}

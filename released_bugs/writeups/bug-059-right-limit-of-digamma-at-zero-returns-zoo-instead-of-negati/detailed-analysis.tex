@@ -1,0 +1,158 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 59: Right Limit of Digamma at Zero Returns Zoo Instead of Negative Infinity}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import limit, polygamma, symbols
+
+x = symbols("x")
+expr = polygamma(0, x)
+
+print(limit(expr, x, 0, dir="+"))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+limit(polygamma(0, x), x, 0, dir='+') = zoo
+value at x=1/10**20 = -100000000000000000000.57721566490153286059006274941392016667755538996377930634212
+mpmath digamma(1e-20) = -100000000000000000000.57721566490153286059006274941392016667755538996377930634212
+\end{lstlisting}
+
+The symbolic one-sided limit returns \(\mathtt{zoo}\), SymPy's complex-infinity marker, even though nearby positive real samples are large negative real numbers and agree with the independent \texttt{mpmath.digamma} value. The result therefore loses the sign of a real directional pole.
+
+\subsection{Expected Behavior}
+
+The correct value is
+\[
+  \lim_{x \to 0^+} \operatorname{polygamma}(0,x)
+  =
+  \lim_{x \to 0^+} \psi(x)
+  =
+  -\infty.
+\]
+Equivalently, the SymPy call should return \texttt{S.NegativeInfinity}, displayed as \(-\mathtt{oo}\), not \(\mathtt{zoo}\).
+
+\subsection{Mathematical Explanation}
+
+The order-zero polygamma function is the digamma function,
+\[
+  \operatorname{polygamma}(0,x)=\psi(x)=\frac{\Gamma'(x)}{\Gamma(x)}.
+\]
+At the origin it has the Laurent expansion
+\[
+  \psi(x) = -\frac{1}{x} - \gamma + O(x),
+  \qquad x \to 0,
+\]
+where \(\gamma\) is Euler's constant. Along the right-hand real approach \(x \to 0^+\), the principal part \(-1/x\) tends to \(-\infty\). Thus the one-sided limit is a signed real infinity. Returning \(\mathtt{zoo}\) is not an equivalent representation: \(\mathtt{zoo}\) denotes an undirected complex infinity and discards the directional sign that the real limit determines.
+
+\subsection{Source-Level Diagnosis}
+
+\begin{sloppypar}
+The diagnosis identifies the missing local pole expansion in \nolinkurl{sympy/functions/special/gamma_functions.py}, specifically in the leading-term method for \texttt{polygamma} around line 790. The traced call path is that \texttt{limit()} invokes \texttt{Limit.doit()} in \nolinkurl{sympy/series/limits.py}; the meromorphic/leading-term path cannot obtain a usable leading term for \(\operatorname{polygamma}(0,x)\), and \texttt{gruntz()} also fails while trying to expand \(\operatorname{polygamma}(0,1/x)\). \texttt{Limit.doit()} then falls back to the heuristic path in \nolinkurl{sympy/series/limits.py}, which evaluates the function at the argument limit and constructs \(\operatorname{polygamma}(0,0)\).
+\end{sloppypar}
+
+The key source-level behavior is that the \texttt{polygamma} leading-term method returns the original expression unchanged for this finite pole, instead of returning the principal part \(-1/x\). Since the returned expression still contains \(x\), \texttt{Expr.leadterm()} rejects it as a leading coefficient. After the leading-term and \texttt{gruntz()} routes fail, \texttt{polygamma.eval()} in \nolinkurl{sympy/functions/special/gamma_functions.py} represents \(\operatorname{polygamma}(0,0)\) as \texttt{S.ComplexInfinity}. That fallback endpoint evaluation explains why the final limit is \(\mathtt{zoo}\) rather than the signed value \(-\infty\).
+
+\begin{lstlisting}[style=bugpython]
+# Diagnosed behavior, paraphrased from the source trace:
+# polygamma._eval_as_leading_term() leaves polygamma(0, x)
+# unchanged at the finite pole instead of exposing -1/x.
+# The limit fallback then evaluates polygamma(0, 0), which is zoo.
+\end{lstlisting}
+
+A plausible fix direction identified by the diagnosis is to teach the \texttt{polygamma} leading-term method, or the finite-point series machinery, about poles at nonpositive integers. For order \(0\) at \(z=0\), the leading term should be \(-1/z\); more generally, the implementation should expose the signed principal part at \(z=-k\) so directional limits can preserve the sign.
+
+\subsection{Additional Failing Instances}
+
+The independent verification checks the positive rescaling family
+\[
+  \lim_{x \to 0^+} \operatorname{polygamma}(0,a x),
+  \qquad a \in \{1,2,3,4,5,6\}.
+\]
+For every positive scale \(a\), the same Laurent expansion gives
+\[
+  \psi(a x) = -\frac{1}{a x} - \gamma + O(x),
+  \qquad x \to 0^+,
+\]
+so each limit is \(-\infty\). The verification records that SymPy instead returns \(\mathtt{zoo}\) throughout this family.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.44\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\lim_{x \to 0^+}\operatorname{polygamma}(0,x)\) & \(\mathtt{zoo}\) & \(-\infty\) \\
+\(\lim_{x \to 0^+}\operatorname{polygamma}(0,2x)\) & \(\mathtt{zoo}\) & \(-\infty\) \\
+\(\lim_{x \to 0^+}\operatorname{polygamma}(0,3x)\) & \(\mathtt{zoo}\) & \(-\infty\) \\
+\(\lim_{x \to 0^+}\operatorname{polygamma}(0,4x)\) & \(\mathtt{zoo}\) & \(-\infty\) \\
+\(\lim_{x \to 0^+}\operatorname{polygamma}(0,5x)\) & \(\mathtt{zoo}\) & \(-\infty\) \\
+\(\lim_{x \to 0^+}\operatorname{polygamma}(0,6x)\) & \(\mathtt{zoo}\) & \(-\infty\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check. The closest related issues were SymPy issue 5415, an older \texttt{limit} failure involving \texttt{polygamma} for a different expression and a limit at infinity, and a comment on issue 5229 discussing \(\operatorname{polygamma}(0,x)\) in harmonic-number asymptotics. These indicate that \texttt{polygamma} limits are a known problem area. Critically, this specific right-hand zero-pole sign error \(\operatorname{limit}(\operatorname{polygamma}(0,x),x,0,\texttt{dir=``+''})=\mathtt{zoo}\) instead of \(-\infty\) IS publicly reported and fixed: open (unmerged) SymPy PR~\#29424 (\url{https://github.com/sympy/sympy/pull/29424}, created 2026-03-16) targets exactly this symptom and root cause (\texttt{polygamma.\_eval\_as\_leading\_term} in \texttt{gamma\_functions.py}). The candidate therefore duplicates an existing unmerged fix rather than being a novel specific bug, though it remains actionable as confirmation of a still-open problem.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import S, limit, polygamma, symbols
+import pytest
+
+
+@pytest.mark.parametrize("scale", [1, 2, 3, 4, 5, 6])
+def test_digamma_right_limit_at_zero_preserves_sign(scale):
+    x = symbols("x")
+    assert limit(polygamma(0, scale*x), x, 0, dir="+") == S.NegativeInfinity
+\end{lstlisting}
+
+\end{document}

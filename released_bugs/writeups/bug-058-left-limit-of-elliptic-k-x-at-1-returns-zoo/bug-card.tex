@@ -1,0 +1,80 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 58: Left Limit of elliptic\_k(x) at 1 Returns zoo}
+
+\begin{counterexamplebox}
+\textbf{Task.} Evaluate the real left-hand limit of the complete elliptic integral:
+\[
+\lim_{x\to1^-}\operatorname{elliptic\_k}(x).
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+\operatorname{limit}(\operatorname{elliptic\_k}(x),x,1,\mathrm{dir}=-)=\mathrm{zoo}.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+\lim_{x\to1^-}\operatorname{elliptic\_k}(x)=+\infty.
+\]
+
+\medskip
+\textbf{Explanation.} For real \(m\to1^-\), \(K(m)\) has leading behavior
+\[
+K(m)=-\frac12\log(1-m)+O(1),
+\]
+so it diverges through positive real values. Returning \(\mathrm{zoo}\) loses the one-sided real sign and is not equivalent to \(+\infty\).
+
+\medskip
+\textbf{Likely root cause.} The diagnosis traces the limit through \texttt{elliptic\_k.\_eval\_nseries}, which delegates the expansion near \(m=1\) to a hypergeometric rewrite that returns \texttt{nan} for \(\operatorname{elliptic\_k}(1-w)\). The missing branch-aware logarithmic expansion makes the limit machinery fall back to unsigned complex infinity; this is a new instance of a known failure mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-058-left-limit-of-elliptic-k-x-at-1-returns-zoo}
+\end{counterexamplebox}
+
+\end{document}

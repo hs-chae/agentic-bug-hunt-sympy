@@ -1,0 +1,201 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 10: Principal Cube-Root Inequality Includes Negative Reals}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import S, N, symbols
+from sympy.solvers.inequalities import solve_univariate_inequality
+
+x = symbols("x")
+sol = solve_univariate_inequality(x**(S(1)/3) <= 1, x, relational=False)
+
+print("solution:", sol)
+print("contains_minus_one:", sol.contains(-1))
+print("lhs_at_minus_one:", N((-1)**(S(1)/3), 30))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+solution: Interval(-oo, 1)
+contains_minus_one: True
+lhs_at_minus_one: 0.5 + 0.866025403784438646763723170753*I
+\end{lstlisting}
+
+SymPy reports that the solution set is \((-\infty, 1]\). In particular, the
+reported set contains \(x=-1\), even though SymPy's principal value of
+\((-1)^{1/3}\) is non-real. Such a point cannot satisfy a real-valued inequality
+of the form \(x^{1/3} \leq 1\).
+
+\subsection{Expected Behavior}
+
+The mathematically correct solution over the real line is
+\[
+    [0, 1].
+\]
+More generally, for the parametrized family checked in the artifact,
+\[
+    \operatorname{solve\_univariate\_inequality}
+    \left(x^{1/3} \leq m,\ x,\ \texttt{relational=False}\right)
+    = [0, m^3]
+\]
+for the positive integer values \(m=1,\ldots,6\).
+
+\subsection{Mathematical Explanation}
+
+SymPy's expression \(x^{1/3}\), represented as \verb|x**(S(1)/3)|, uses the
+principal branch of the power function. For a negative real input \(x=-a\) with
+\(a>0\),
+\[
+    (-a)^{1/3}
+      = \exp\!\left(\frac{\log(a)+i\pi}{3}\right)
+      = a^{1/3}\left(\frac{1}{2} + \frac{\sqrt{3}}{2}i\right),
+\]
+which is not real. Therefore the real-valued domain of the left-hand side is not
+all of \(\mathbb{R}\); for this inequality it is \(x \geq 0\).
+
+On that domain, the principal cube root agrees with the ordinary nonnegative
+real cube root and is monotone increasing. Thus
+\[
+    x^{1/3} \leq 1
+    \quad\Longleftrightarrow\quad
+    0 \leq x \leq 1.
+\]
+The returned interval \((-\infty,1]\) is not an equivalent representation or a
+harmless branch convention: it contains points at which the left-hand side is
+complex, so the ordered real comparison is not satisfied.
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis identifies the primary source-level issue in
+\nolinkurl{sympy/calculus/util.py}, in the function \texttt{continuous\_domain}.
+The public call enters \texttt{solve\_univariate\_inequality} in
+\nolinkurl{sympy/solvers/inequalities.py}. For the representative input, the
+solver forms \(e=x^{1/3}-1\), obtains the equality root \(x=1\), and asks
+\texttt{continuous\_domain} for the real continuity domain of that expression.
+The interval-building code in \texttt{solve\_univariate\_inequality} then tests
+sample points between critical points and accepts whole intervals whose samples
+satisfy the inequality.
+
+The problematic rule reported in \texttt{continuous\_domain} treats rational
+powers with odd denominator as real-valued over all real bases:
+
+\begin{lstlisting}[style=bugpython]
+if atom.exp.is_rational and den.is_odd:
+    pass
+\end{lstlisting}
+
+That rule matches \texttt{real\_root}-style semantics, but it is too broad for
+principal \texttt{Pow} semantics. For \(x^{1/3}-1\), it causes
+\texttt{continuous\_domain} to return all real numbers rather than restricting
+the expression to \(x \geq 0\). With the domain incorrectly set to
+\(\mathbb{R}\), the inequality solver samples the interval \((-\infty,1)\);
+the selected sample point satisfies the inequality, so the solver appends the
+entire interval \((-\infty,1]\). No later filtering removes the negative inputs
+where the principal fractional power is complex.
+
+The suggested fix direction in the diagnosis is to make
+\texttt{continuous\_domain} distinguish principal \texttt{Pow} from real-root
+semantics. For rational non-integer powers of a real expression, a plausible
+fix is to require the base to be nonnegative unless SymPy can prove the
+principal value remains real on a larger set. The inequality solver should also
+intersect interval results with the real-valued domain of the relational
+expression.
+
+\subsection{Additional Failing Instances}
+
+The independent verification checks the representative case together with the
+positive integer parameters \(m=1,\ldots,6\). In each case, SymPy returns an
+interval of the form \((-\infty,m^3]\), which includes negative real inputs such
+as \(-1\). The expected behavior is uniformly \([0,m^3]\), because the principal
+power \(x^{1/3}\) is real-valued only for \(x\geq0\), and on that domain
+\(x^{1/3}\leq m\) is equivalent to \(x\leq m^3\) for these positive \(m\).
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.44\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\texttt{solve\_univariate\_inequality}(x^{1/3}\leq 1)\) & \(\texttt{Interval(-oo, 1)}\) & \(\texttt{Interval(0, 1)}\) \\
+\(\texttt{solve\_univariate\_inequality}(x^{1/3}\leq 2)\) & \(\texttt{Interval(-oo, 8)}\) & \(\texttt{Interval(0, 8)}\) \\
+\(\texttt{solve\_univariate\_inequality}(x^{1/3}\leq 3)\) & \(\texttt{Interval(-oo, 27)}\) & \(\texttt{Interval(0, 27)}\) \\
+\(\texttt{solve\_univariate\_inequality}(x^{1/3}\leq 4)\) & \(\texttt{Interval(-oo, 64)}\) & \(\texttt{Interval(0, 64)}\) \\
+\(\texttt{solve\_univariate\_inequality}(x^{1/3}\leq 5)\) & \(\texttt{Interval(-oo, 125)}\) & \(\texttt{Interval(0, 125)}\) \\
+\(\texttt{solve\_univariate\_inequality}(x^{1/3}\leq 6)\) & \(\texttt{Interval(-oo, 216)}\) & \(\texttt{Interval(0, 216)}\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check and
+classified this as a new instance of a known failure mode. The closest public
+material identified was SymPy documentation distinguishing principal roots from
+\texttt{real\_root}, together with broader public awareness that principal-root
+domain handling can be subtle. The available evidence did not identify a clear
+public duplicate for this exact \texttt{solve\_univariate\_inequality} input or
+for the exact wrong interval \(\texttt{Interval(-oo, 1)}\). This case is
+therefore individually actionable as a concrete regression test and issue,
+even though the general semantic pitfall is known.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+from sympy import Interval, S, symbols
+from sympy.solvers.inequalities import solve_univariate_inequality
+
+@pytest.mark.parametrize("m", [1, 2, 3, 4, 5, 6])
+def test_fractional_power_inequality_real_domain(m):
+    x = symbols("x")
+    assert solve_univariate_inequality(x**(S(1)/3) <= m, x, relational=False) == Interval(0, m**3)
+\end{lstlisting}
+
+\end{document}

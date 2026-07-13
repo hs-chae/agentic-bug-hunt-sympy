@@ -1,0 +1,138 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\date{}
+
+\begin{document}
+
+\author{}
+\maketitle
+
+\section{Bug 54: singularities misses the pole of gamma(x) at zero}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import S, gamma, residue, series, symbols
+from sympy.calculus.singularities import singularities
+
+x = symbols("x")
+s = singularities(gamma(x), x, S.Complexes)
+
+print("singularities =", s)
+print("contains 0 =", s.contains(0))
+print("gamma(0) =", gamma(0))
+print("residue at 0 =", residue(gamma(x), x, 0))
+print("series at 0 =", series(gamma(x), x, 0, 1))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+singularities = EmptySet
+contains 0 = False
+gamma(0) = zoo
+residue at 0 = 1
+series at 0 = 1/x - EulerGamma + O(x)
+\end{lstlisting}
+
+The singularity query reports no singularities and specifically reports that the returned set does not contain \(0\). This contradicts the same symbolic system's direct evidence that \(\Gamma(0)\) is infinite, that the residue at \(0\) is \(1\), and that the Laurent expansion has a \(1/x\) term.
+
+\subsection{Expected Behavior}
+
+The result of \(\operatorname{singularities}(\Gamma(x), x, \mathbb{C})\) should contain \(0\). More completely, the finite poles of \(\Gamma(x)\) occur at the nonpositive integers, so a correct result should include
+\[
+  \{0, -1, -2, -3, \ldots\}.
+\]
+
+\subsection{Mathematical Explanation}
+
+The gamma function \(\Gamma(x)\) is meromorphic with simple poles at every nonpositive integer. At the origin its Laurent expansion is
+\[
+  \Gamma(x) = \frac{1}{x} - \gamma_{\mathrm{E}} + O(x),
+\]
+where \(\gamma_{\mathrm{E}}\) is Euler's constant. The coefficient of \(1/x\) is nonzero, so \(x=0\) is a genuine pole, not a removable singularity or a branch-convention artifact. Therefore \(\emptyset\) is not an equivalent representation of the singularity set: it asserts that there are no singularities in the requested complex domain, while \(0\) is necessarily in that set.
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis localizes the miss to \nolinkurl{sympy/calculus/singularities.py}, specifically the scanner in \texttt{singularities} around lines 94--108. The traced public call path enters the \texttt{singularities} function in the \nolinkurl{sympy.calculus.singularities} module, sympifies \(\Gamma(x)\), rewrites only selected trigonometric and hyperbolic reciprocal forms, scans \texttt{Pow} atoms, and then scans only the atoms \texttt{log}, \texttt{asech}, \texttt{acsch}, \texttt{atanh}, and \texttt{acoth}. For \(\Gamma(x)\), those scans do not generate any singularity conditions, so the initially empty set is returned unchanged.
+
+The diagnosis also notes that \nolinkurl{sympy/functions/special/gamma_functions.py} contains related gamma-function knowledge: \texttt{gamma.eval} evaluates nonpositive integer numeric arguments to \texttt{ComplexInfinity}, and the class metadata lists \texttt{ComplexInfinity} in \texttt{\_singularities}. However, \texttt{singularities()} does not use that evaluation behavior to derive finite symbolic poles. As a result, the symbolic scanner treats \(\Gamma(x)\) as opaque and never constructs the condition that the argument of \(\Gamma\) lies in the nonpositive integers. A plausible fix direction identified by the diagnosis is to add a special-function path for \(\Gamma(g(x))\), solving \(g(x)\in\{0,-1,-2,\ldots\}\), or to use richer function-level meromorphic singularity metadata.
+
+\subsection{Additional Failing Instances}
+
+The parametrized evidence checks shifted gamma functions of the form \(\Gamma(x+s)\). In each case, \(\Gamma\) has a pole whenever \(x+s\) is a nonpositive integer; in particular, \(x=-s\) makes the argument equal to \(0\). The current behavior omits that representative pole for every tested shift.
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.44\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\operatorname{singularities}(\Gamma(x), x, \mathbb{C})\) & Returned set does not contain \(0\) & Returned set contains \(0\) \\
+\(\operatorname{singularities}(\Gamma(x+1), x, \mathbb{C})\) & Returned set does not contain \(-1\) & Returned set contains \(-1\) \\
+\(\operatorname{singularities}(\Gamma(x+2), x, \mathbb{C})\) & Returned set does not contain \(-2\) & Returned set contains \(-2\) \\
+\(\operatorname{singularities}(\Gamma(x-1), x, \mathbb{C})\) & Returned set does not contain \(1\) & Returned set contains \(1\) \\
+\(\operatorname{singularities}(\Gamma(x+3), x, \mathbb{C})\) & Returned set does not contain \(-3\) & Returned set contains \(-3\) \\
+\(\operatorname{singularities}(\Gamma(x-2), x, \mathbb{C})\) & Returned set does not contain \(2\) & Returned set contains \(2\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+These are the same mathematical failure rather than unrelated edge cases: the scanner fails to propagate the finite pole set of \(\Gamma\) through a simple affine argument.
+
+\subsection{Related Issues Assessment}
+
+The best-effort deduplication check found public material related to gamma poles and singularities, including SymPy issue 14567 about a \texttt{ValueError} involving gamma-function poles while printing an expression with \texttt{factorial}, and issue 18455 about better singularity handling in plots. The available evidence does not identify a public report that \texttt{singularities(gamma(x), x, S.Complexes)} silently returns \texttt{EmptySet} or omits the finite pole at \(0\). The deduplication verdict is therefore a new failure mode with no public precedent, and the case remains individually actionable as a precise calculus-special-functions regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+from sympy import S, gamma, symbols
+from sympy.calculus.singularities import singularities
+
+
+@pytest.mark.parametrize("shift", [0, 1, 2, -1, 3, -2])
+def test_singularities_gamma_shifted_poles(shift):
+    x = symbols("x")
+    assert singularities(gamma(x + shift), x, S.Complexes).contains(-shift) == S.true
+\end{lstlisting}
+
+\end{document}

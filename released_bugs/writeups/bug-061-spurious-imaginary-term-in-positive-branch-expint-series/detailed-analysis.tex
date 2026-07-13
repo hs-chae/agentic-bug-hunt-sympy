@@ -1,0 +1,227 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 61: Spurious Imaginary Term in Positive-Branch \texorpdfstring{\texttt{expint}}{expint} Series}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import EulerGamma, N, Rational, expint, series, symbols
+
+x = symbols("x", positive=True)
+s = series(expint(2, x), x, 0, 2)
+print("series:", s)
+
+t = Rational(1, 1000)
+print("truncated at 1/1000:", N(s.removeO().subs(x, t), 50))
+print("actual at 1/1000:", N(expint(2, t), 50))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+series: 1 + x*(log(x) - 1 + EulerGamma - I*pi) + O(x**2)
+truncated at 1/1000: 0.99266946038591939580855253772602930980823885487005 - 0.0031415926535897932384626433832795028841971693993751*I
+actual at 1/1000: 0.99266896046923884233605257079126963912695444183171
+\end{lstlisting}
+
+SymPy returns an imaginary first-order term, \(-i\pi x\), in the small-positive
+series for \(\operatorname{expint}(2,x)\).  The numerical comparison at
+\(x=10^{-3}\) shows the same problem: the truncated series is complex, while
+direct evaluation of \(\operatorname{expint}(2,10^{-3})\) is real.
+
+\subsection{Expected Behavior}
+
+For \(x>0\), the expansion at the origin should be
+\[
+  \operatorname{expint}(2,x)
+  = 1 + x\bigl(\log(x)-1+\gamma\bigr) + O(x^2),
+\]
+where \(\gamma\) is Euler's constant.  No imaginary branch term should appear on
+the positive real branch.
+
+\subsection{Mathematical Explanation}
+
+For positive real \(x\), the exponential integral \(E_2(x)\) is real and obeys
+the recurrence
+\[
+  E_2(x) = e^{-x} - x E_1(x).
+\]
+The positive-real expansion of \(E_1\) near the origin is
+\[
+  E_1(x) = -\gamma - \log(x) + x + O(x^2).
+\]
+Substitution gives
+\[
+\begin{aligned}
+  E_2(x)
+    &= \bigl(1-x+O(x^2)\bigr)
+       - x\bigl(-\gamma-\log(x)+x+O(x^2)\bigr) \\
+    &= 1 + x\bigl(\log(x)-1+\gamma\bigr) + O(x^2).
+\end{aligned}
+\]
+The observed term \(-i\pi x\) is therefore not an equivalent representation or a
+harmless branch annotation.  It changes the value of the truncated series at
+positive real inputs from a real number to a complex number.
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis identifies the relevant code in
+\nolinkurl{sympy/functions/special/error_functions.py}, specifically
+\texttt{Ei.\_eval\_rewrite\_as\_Si} near lines 1226--1227 and
+\texttt{expint.\_eval\_nseries} near lines 1443--1445.  The traced public call is
+\(\operatorname{series}(\operatorname{expint}(2,x),x,0,2)\).  For positive
+integer order \(\nu>1\), \texttt{expint.\_eval\_nseries} rewrites through
+\texttt{\_eval\_rewrite\_as\_Ei}.  In the case \(\nu=2\), this produces an
+expression equivalent to
+\[
+  -x\bigl(-\operatorname{Ei}(x\,\operatorname{exp\_polar}(i\pi))+i\pi\bigr)
+  + e^{-x}.
+\]
+The resulting \(\operatorname{Ei}\) term is then expanded through the
+\texttt{Ei} n-series method, which rewrites via
+\nolinkurl{Ei._eval_rewrite_as_Si}.
+
+The problematic rule identified in the diagnosis is that
+\texttt{Ei.\_eval\_rewrite\_as\_Si} uses only \texttt{z.is\_negative} to decide
+whether to subtract \(i\pi\):
+
+\begin{lstlisting}[style=bugpython]
+if z.is_negative:
+    return Shi(z) + Chi(z) - I*pi
+\end{lstlisting}
+
+For \(z=x\,\operatorname{exp\_polar}(i\pi)\) with \(x>0\), SymPy reports
+\texttt{z.is\_negative == True}.  The diagnosis explains that this polar
+argument is on the upper sheet and already carries the \(+i\pi\) logarithmic
+branch.  Treating it like an ordinary negative real argument subtracts an extra
+\(i\pi\), so
+\(\operatorname{Ei}(x\,\operatorname{exp\_polar}(i\pi))\) is expanded as if it
+were \(\gamma+\log(x)-x+O(x^2)\) rather than
+\(\gamma+\log(x)+i\pi-x+O(x^2)\).  When this is substituted back into the
+\(\operatorname{expint}(2,x)\) rewrite, the missing branch constant leaves the
+spurious \(-i\pi x\) term.
+
+A plausible fix direction supported by the diagnosis is to distinguish ordinary
+negative real arguments from polar negative arguments in
+\texttt{Ei.\_eval\_rewrite\_as\_Si}.  Another supported direction is to avoid
+this \(\operatorname{Ei}\) rewrite in \texttt{expint.\_eval\_nseries} for
+positive integer order and instead use a real recurrence or local series for
+positive real arguments.
+
+\subsection{Additional Failing Instances}
+
+The independent verification checks the same positive-origin expansion after
+scaling the positive argument by several positive constants.  In each case the
+expected series follows from the same recurrence applied to
+\(E_2(a x)=e^{-a x}-a x E_1(a x)\), so the first-order term should remain real:
+\[
+  \operatorname{expint}(2,a x)
+  = 1 + a x\bigl(\log(a x)-1+\gamma\bigr) + O(x^2),
+  \qquad a>0.
+\]
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.38\linewidth}>{\raggedright\arraybackslash}p{0.27\linewidth}>{\raggedright\arraybackslash}p{0.27\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\operatorname{series}(\operatorname{expint}(2,x),x,0,2)\) &
+Adds \(-i\pi x\) &
+\(1+x(\log(x)-1+\gamma)+O(x^2)\) \\
+\(\operatorname{series}(\operatorname{expint}(2,2x),x,0,2)\) &
+Adds \(-2i\pi x\) &
+\(1+2x(\log(2x)-1+\gamma)+O(x^2)\) \\
+\(\operatorname{series}(\operatorname{expint}(2,3x),x,0,2)\) &
+Adds \(-3i\pi x\) &
+\(1+3x(\log(3x)-1+\gamma)+O(x^2)\) \\
+\(\operatorname{series}(\operatorname{expint}(2,x/2),x,0,2)\) &
+Adds \(-i\pi x/2\) &
+\(1+\frac{x}{2}(\log(x/2)-1+\gamma)+O(x^2)\) \\
+\(\operatorname{series}(\operatorname{expint}(2,5x),x,0,2)\) &
+Adds \(-5i\pi x\) &
+\(1+5x(\log(5x)-1+\gamma)+O(x^2)\) \\
+\(\operatorname{series}(\operatorname{expint}(2,3x/2),x,0,2)\) &
+Adds \(-3i\pi x/2\) &
+\(1+\frac{3x}{2}(\log(3x/2)-1+\gamma)+O(x^2)\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check and classified
+this as a new instance of a known failure mode.  The closest public matches in
+the artifact are SymPy issue \#6725, which concerns an \(\operatorname{expint}\)
+series problem for fractional order and a negative argument; pull request
+\#26892, which adds nearby \(\operatorname{expint}\) series and leading-term
+support; and issue \#8712, which discusses polar lifting and branch choices for
+\(\operatorname{expint}(1,t\,\operatorname{exp\_polar}(i\pi))\).  These are
+related to the broader \(\operatorname{expint}\) branch/series family, but the
+available evidence did not identify a clear public duplicate for the exact
+positive-real small-\(x\) case
+\(\operatorname{series}(\operatorname{expint}(2,x),x,0,2)\).  The case remains
+individually actionable because it is a concise, reproducible regression target
+for a specific branch-term error.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+
+from sympy import EulerGamma, O, S, expint, log, series, simplify, symbols
+
+
+@pytest.mark.parametrize("scale", [S(1), S(2), S(3), S.Half, S(5), 3*S.Half])
+def test_expint_two_positive_origin_series_has_no_imaginary_branch_term(scale):
+    x = symbols("x", positive=True)
+    actual = series(expint(2, scale*x), x, 0, 2)
+    expected = 1 + scale*x*(log(scale*x) - 1 + EulerGamma) + O(x**2)
+    assert simplify(actual.removeO() - expected.removeO()) == 0
+\end{lstlisting}
+
+\end{document}

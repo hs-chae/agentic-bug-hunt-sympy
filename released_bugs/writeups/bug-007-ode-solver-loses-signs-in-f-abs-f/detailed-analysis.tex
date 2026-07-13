@@ -1,0 +1,224 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 7: dsolve returns an invalid branch for f prime equals sqrt f squared}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import Eq, Function, N, diff, dsolve, simplify, sqrt, symbols
+
+x = symbols("x")
+f = Function("f")
+C1 = symbols("C1")
+
+ode = Eq(diff(f(x), x), sqrt(f(x)**2))
+sol = dsolve(ode)
+
+rhs = sol[0].rhs.subs(C1, 1)
+residual = diff(rhs, x) - sqrt(rhs**2)
+
+print("dsolve result:", sol)
+print("chosen returned branch with C1=1:", rhs)
+print("residual:", simplify(residual))
+print("residual at x=0:", N(residual.subs(x, 0), 50))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+dsolve result: [Eq(f(x), C1*exp(-x)), Eq(f(x), C1*exp(x))]
+chosen returned branch with C1=1: exp(-x)
+residual: -sqrt(exp(-2*x)) - exp(-x)
+residual at x=0: -2.0000000000000000000000000000000000000000000000000
+\end{lstlisting}
+
+SymPy returns an unrestricted decreasing exponential branch.  Setting the
+arbitrary constant in that branch to \(1\) gives \(f(x)=e^{-x}\), but the
+residual of the original differential equation is nonzero.  At \(x=0\), the
+left-hand side is \(-1\) while the right-hand side is \(1\).
+
+\subsection{Expected Behavior}
+
+The returned solution set should not include an unrestricted branch
+\(f(x)=C_1 e^{-x}\).  For real-valued solutions, any decreasing exponential
+branch must carry the sign condition \(C_1<0\); equivalently, the solver should
+leave the branch-sensitive solution implicit or return a branch-conditioned
+answer.  Positive-constant decreasing exponentials such as \(e^{-x}\) are not
+solutions of \(f'=\sqrt{f^2}\).
+
+\subsection{Mathematical Explanation}
+
+For real-valued \(f\),
+\[
+  \sqrt{f(x)^2}=|f(x)|.
+\]
+Therefore the differential equation is branch-sensitive:
+\[
+  f'(x)=|f(x)|.
+\]
+On a positive branch, this reduces to \(f'=f\), so the nonzero solutions are
+\(f(x)=C e^x\) with \(C>0\).  On a negative branch, this reduces to
+\(f'=-f\), so the nonzero solutions are \(f(x)=C e^{-x}\) with \(C<0\).  The
+zero solution is also valid.
+
+The returned expression \(C_1 e^{-x}\) is not wrong merely because of a
+different representation or a missing integration constant; it is wrong because
+SymPy returns it with \(C_1\) unrestricted.  Substituting \(C_1=1\) gives
+\[
+  f(x)=e^{-x},\qquad f'(x)=-e^{-x},\qquad
+  \sqrt{f(x)^2}=\sqrt{e^{-2x}}=e^{-x}
+\]
+on the real line, and hence
+\[
+  f'(x)-\sqrt{f(x)^2}=-2e^{-x},
+\]
+which is not identically zero.
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis identifies the relevant source-level path in the ODE solver.  In
+\nolinkurl{sympy/solvers/ode/single.py}, the \texttt{Separable} hint builds an
+implicit separable solution equivalent to
+\[
+  \int^{f(x)} \frac{d y}{\sqrt{y^2}} = C_1 + \int^x 1\,d x.
+\]
+During simplification, \texttt{odesimp} in
+\nolinkurl{sympy/solvers/ode/ode.py} calls \texttt{\_handle\_Integral}, which
+evaluates the left integral to a branch-sensitive expression involving
+\(f(x)\log(f(x))/\sqrt{f(x)^2}\).  The traced call path then reaches the
+explicit solving step in \texttt{odesimp}, reported around
+\nolinkurl{sympy/solvers/ode/ode.py}:1666.
+
+The key problematic rule is that \texttt{odesimp} explicitly solves the
+branch-sensitive implicit equation without retaining the sign condition that
+distinguishes the positive and negative real branches:
+
+\begin{lstlisting}[style=bugpython]
+eq = _handle_Integral(eq, func, hint)
+...
+eqsol = solve(eq, func, force=True, rational=False if floats else None)
+...
+eq = [Eq(f(x), _expand(t)) for t in eqsol]
+\end{lstlisting}
+
+This produces both \(C_1 e^{-x}\) and \(C_1 e^x\) as explicit branches with an
+unrestricted integration constant.  The decreasing exponential is valid only on
+a negative branch of \(f\), so the unrestricted return value falsely permits
+positive constants.  A plausible fix direction, supported by the diagnosis, is
+to avoid forcing branch-sensitive implicit ODE solutions into unconstrained
+explicit branches unless the necessary sign conditions can be attached.  A
+post-solve residual validation step, similar in spirit to checking returned ODE
+solutions, would also reject the positive-constant decreasing branch.
+
+\subsection{Additional Failing Instances}
+
+The independent verification exercises the same returned branch with positive
+constants \(1\) through \(6\).  In each case SymPy's unrestricted
+\(C_1e^{-x}\) branch admits \(C_1=c>0\), producing \(f(x)=c e^{-x}\).  The
+residual at \(x=0\) is
+\[
+  f'(0)-\sqrt{f(0)^2}=-c-\sqrt{c^2}=-2c,
+\]
+so every tested positive constant gives a concrete false solution.  The
+expected behavior is the same across the family: the decreasing branch should
+either be absent for positive constants or be returned with a condition such as
+\(C_1<0\).
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.44\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(C_1=1\) in \(C_1e^{-x}\) & admits \(e^{-x}\), residual at \(0\) is \(-2\) & reject this branch or require \(C_1<0\) \\
+\(C_1=2\) in \(C_1e^{-x}\) & admits \(2e^{-x}\), residual at \(0\) is \(-4\) & reject this branch or require \(C_1<0\) \\
+\(C_1=3\) in \(C_1e^{-x}\) & admits \(3e^{-x}\), residual at \(0\) is \(-6\) & reject this branch or require \(C_1<0\) \\
+\(C_1=4\) in \(C_1e^{-x}\) & admits \(4e^{-x}\), residual at \(0\) is \(-8\) & reject this branch or require \(C_1<0\) \\
+\(C_1=5\) in \(C_1e^{-x}\) & admits \(5e^{-x}\), residual at \(0\) is \(-10\) & reject this branch or require \(C_1<0\) \\
+\(C_1=6\) in \(C_1e^{-x}\) & admits \(6e^{-x}\), residual at \(0\) is \(-12\) & reject this branch or require \(C_1<0\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check.  The
+closest related public material concerns the general branch/sign issue for
+\(\sqrt{x^2}\), including SymPy documentation that \(\sqrt{x^2}\) is not
+generally equal to \(x\) and general references noting that \(\sqrt{x^2}=|x|\)
+over the reals.  Focused searches did not identify a public report for this
+specific \texttt{dsolve} input, the returned invalid \(C_1e^{-x}\) branch, or
+the residual failure above.  The deduplication verdict is therefore a new
+instance of a known failure mode: the broad square-root branch issue is known,
+but this exact ODE solver counterexample is previously unreported in the
+available evidence and remains individually actionable as an issue and
+regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+
+from sympy import Eq, Function, N, diff, dsolve, sqrt, symbols
+
+
+@pytest.mark.parametrize("c", [1, 2, 3, 4, 5, 6])
+def test_dsolve_sqrt_f_squared_branches_satisfy_ode_for_positive_constants(c):
+    x = symbols("x")
+    f = Function("f")
+    ode = Eq(diff(f(x), x), sqrt(f(x)**2))
+    sol = dsolve(ode)
+
+    for equation in sol:
+        rhs = equation.rhs
+        constants = [s for s in rhs.free_symbols if s != x]
+        concrete_rhs = rhs.subs({constant: c for constant in constants})
+        residual_at_zero = N((diff(concrete_rhs, x) - sqrt(concrete_rhs**2)).subs(x, 0), 50)
+        assert abs(complex(residual_at_zero)) < 1e-40
+\end{lstlisting}
+
+\end{document}

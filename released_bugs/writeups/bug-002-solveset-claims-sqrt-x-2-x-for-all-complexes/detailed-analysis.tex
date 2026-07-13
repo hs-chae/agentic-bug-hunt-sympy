@@ -1,0 +1,176 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 2: \texttt{solveset} Returns All Complexes for \texttt{sqrt(x**2) = x}}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import Eq, N, S, simplify, solveset, sqrt, symbols
+
+x = symbols("x")
+eq = Eq(sqrt(x**2), x)
+sol = solveset(eq, x, domain=S.Complexes)
+
+print("solveset result:", sol)
+print("residual at x = -1:", simplify(eq.lhs.subs(x, -1) - eq.rhs.subs(x, -1)))
+print("numeric residual:", N(eq.lhs.subs(x, -1) - eq.rhs.subs(x, -1), 50))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+solveset result: Complexes
+residual at x = -1: 2
+numeric residual: 2.0000000000000000000000000000000000000000000000000
+\end{lstlisting}
+
+SymPy reports that every complex number solves
+\[
+    \sqrt{x^2} = x.
+\]
+This is incorrect because the returned set includes \(x=-1\), and direct substitution gives
+\[
+    \sqrt{(-1)^2} - (-1) = 1 + 1 = 2.
+\]
+
+\subsection{Expected Behavior}
+
+The result must be a proper subset of \(\mathbb{C}\) and must exclude \(x=-1\). With the principal square root, the complex solutions are the branch-restricted set
+\[
+    \{z \in \mathbb{C} : \operatorname{Re}(z) > 0\}
+    \cup
+    \{it : t \in \mathbb{R},\ t \ge 0\}.
+\]
+In particular, over the real line the solution set is \([0,\infty)\), not all real or complex values.
+
+\subsection{Mathematical Explanation}
+
+The identity \(\sqrt{x^2}=x\) is not valid for arbitrary complex \(x\). SymPy's \(\sqrt{\cdot}\) denotes the principal square root, so clearing the square root by squaring both sides can introduce extraneous solutions unless the principal-branch condition is preserved.
+
+For real \(x\), the familiar identity is
+\[
+    \sqrt{x^2}=|x|,
+\]
+so the equation \(\sqrt{x^2}=x\) holds exactly for \(x\ge 0\). The same issue persists over the complex numbers: the principal square root chooses a branch, and \(\sqrt{z^2}\) agrees with \(z\) only on the corresponding branch-restricted subset. The returned answer \(\mathbb{C}\) is therefore not a harmless alternative representation or a missing simplification; it contains concrete values that do not satisfy the original equation.
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis identifies the immediate source-level cause in \nolinkurl{sympy/solvers/solveset.py}, specifically in \texttt{\_solve\_radical} around line 1094. The traced call path is:
+\[
+    \texttt{solveset}
+    \;\to\;
+    \texttt{\_solveset}
+    \;\to\;
+    \texttt{unrad}
+    \;\to\;
+    \texttt{\_solve\_radical}.
+\]
+For \(\sqrt{x^2}-x=0\), direct inversion does not reduce the equation, so \texttt{\_solveset} calls \texttt{unrad}. The radical-removal step returns the unradicalized equation \(0=0\) with no covering variables. In other words, squaring has turned the original branch-sensitive equation into a tautology.
+
+The problematic behavior is that \texttt{\_solve\_radical} treats the solution set of this unradicalized equation as acceptable even when it is non-finite. The diagnosis notes that \texttt{unrad} produces a superset equation rather than an equivalent equation, but the checker in \texttt{\_solve\_radical} validates only certain finite or set-combination cases. Non-finite set results such as \(\mathbb{C}\) can therefore be returned unchanged, leaving no check against the original equation.
+
+\begin{lstlisting}[style=bugpython]
+if not cov:
+    result = solveset_solver(eq, symbol) - ...
+...
+else:
+    return solutions
+\end{lstlisting}
+
+This behavior causes the observed failure because the branch condition lost during radical clearing is never restored. A plausible fix direction identified by the diagnosis is for \texttt{\_solve\_radical} not to return non-finite radical-clearing results unconditionally. It should either preserve the original equation as a condition, for example through a \texttt{ConditionSet}, or derive and apply the branch conditions introduced by radical removal.
+
+\subsection{Additional Failing Instances}
+
+The independent verification covers the representative case and shifted variants
+\[
+    \sqrt{(x+a)^2}=x+a
+\]
+for \(a\in\{0,1,2,3,4,5\}\). In each case, SymPy returns \(\mathbb{C}\), while the explicit counterexample \(x=-a-1\) makes \(x+a=-1\). Therefore the residual is again
+\[
+    \sqrt{(-1)^2}-(-1)=2,
+\]
+so the same principal-square-root branch error appears across the family.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.44\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\operatorname{solveset}(\sqrt{x^2}=x,\ x,\ \mathbb{C})\) & Returns \(\mathbb{C}\); includes \(x=-1\). & A proper subset of \(\mathbb{C}\); exclude \(x=-1\). \\
+\(\operatorname{solveset}(\sqrt{(x+1)^2}=x+1,\ x,\ \mathbb{C})\) & Returns \(\mathbb{C}\); includes \(x=-2\). & A proper subset of \(\mathbb{C}\); exclude \(x=-2\). \\
+\(\operatorname{solveset}(\sqrt{(x+2)^2}=x+2,\ x,\ \mathbb{C})\) & Returns \(\mathbb{C}\); includes \(x=-3\). & A proper subset of \(\mathbb{C}\); exclude \(x=-3\). \\
+\(\operatorname{solveset}(\sqrt{(x+3)^2}=x+3,\ x,\ \mathbb{C})\) & Returns \(\mathbb{C}\); includes \(x=-4\). & A proper subset of \(\mathbb{C}\); exclude \(x=-4\). \\
+\(\operatorname{solveset}(\sqrt{(x+4)^2}=x+4,\ x,\ \mathbb{C})\) & Returns \(\mathbb{C}\); includes \(x=-5\). & A proper subset of \(\mathbb{C}\); exclude \(x=-5\). \\
+\(\operatorname{solveset}(\sqrt{(x+5)^2}=x+5,\ x,\ \mathbb{C})\) & Returns \(\mathbb{C}\); includes \(x=-6\). & A proper subset of \(\mathbb{C}\); exclude \(x=-6\). \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check and classified this as a new instance of a known failure mode. The closest public material is SymPy's own square-root documentation, which explicitly explains that \(\sqrt{x^2}\) does not simplify to \(x\) in general and even uses \(x=-1\) as a counterexample, together with general \texttt{solveset} documentation stating that returned sets should contain solutions of the input equation. Those references establish that the mathematical pitfall is known, but they do not report the specific solver behavior \(\operatorname{solveset}(\sqrt{x^2}=x,\ x,\ \mathbb{C})=\mathbb{C}\). The case remains individually actionable because it is a reproducible solver correctness failure with a concise regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+
+from sympy import Eq, S, simplify, solveset, sqrt, symbols
+
+
+@pytest.mark.parametrize("a", [0, 1, 2, 3, 4, 5])
+def test_solveset_sqrt_square_not_all_complexes(a):
+    x = symbols("x")
+    eq = Eq(sqrt((x + a)**2), x + a)
+    sol = solveset(eq, x, domain=S.Complexes)
+    bad = -a - 1
+
+    assert sol != S.Complexes
+    assert simplify(eq.lhs.subs(x, bad) - eq.rhs.subs(x, bad)) != 0
+\end{lstlisting}
+
+\end{document}

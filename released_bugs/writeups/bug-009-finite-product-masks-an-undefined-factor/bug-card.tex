@@ -1,0 +1,76 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 9: finite product masks an undefined factor}
+
+\begin{counterexamplebox}
+\textbf{Task.} Evaluate the finite product
+\[
+\prod_{n=0}^{2}\frac{\sin(\pi n)}{n-1}.
+\]
+
+\medskip
+\textbf{SymPy's answer.} \(\operatorname{product}(\sin(\pi n)/(n-1),(n,0,2))=0\).
+
+\medskip
+\textbf{Correct answer.} The product is \(\mathrm{nan}\), or should remain
+unevaluated.
+
+\medskip
+\textbf{Explanation.} At \(n=1\), the factor is \(\sin(\pi)/(1-1)=0/0\),
+so the product contains an undefined term. Hence the finite product is not
+equal to \(0\), even though the factors at \(n=0\) and \(n=2\) vanish.
+
+\medskip
+\textbf{Likely root cause.} In \texttt{Product.doit}, SymPy replaces the index
+by an integer-assumption dummy before evaluating the finite product, so
+\(\sin(\pi n)\) collapses to \(0\) and masks the denominator singularity at
+\(n=1\). This is a new failure mode with no public precedent.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-009-finite-product-masks-an-undefined-factor}
+\end{counterexamplebox}
+
+\end{document}

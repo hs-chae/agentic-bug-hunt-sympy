@@ -1,0 +1,87 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 39: Limit of Bessel quotient derivative is negative infinity}
+
+\begin{counterexamplebox}
+\textbf{Task.} Evaluate the limit of the derivative at the origin:
+\[
+    \lim_{x\to 0}\frac{d}{dx}\left(\frac{J_1(x)}{x}\right).
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+    \operatorname{limit}\!\left(
+      \frac{d}{dx}\frac{\operatorname{besselj}(1,x)}{x},\,x,\,0
+    \right)=-\infty.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+    0.
+\]
+
+\medskip
+\textbf{Explanation.} Since
+\[
+    J_1(x)/x=\frac{1}{2}-\frac{x^2}{16}+O(x^4),
+\]
+its derivative is \(-x/8+O(x^3)\), which tends to \(0\). The infinite answer is
+therefore not an equivalent form or branch convention.
+
+\medskip
+\textbf{Likely root cause.} The diagnosis traces the wrong result to
+\texttt{Add.\_eval\_as\_leading\_term} in \nolinkurl{sympy/core/add.py}: after
+the \(1/(2x)\) and \(-1/(2x)\) leading terms cancel, the fallback asks for too
+low an \texttt{\_eval\_nseries} order and accepts a spurious negative-power
+term. This is a new failure mode with no public precedent.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-039-limit-of-bessel-quotient-derivative-is-negative-infinity}
+\end{counterexamplebox}
+
+\end{document}

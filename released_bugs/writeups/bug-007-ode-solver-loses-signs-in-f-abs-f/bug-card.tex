@@ -1,0 +1,84 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 7: ODE solver loses signs in \texorpdfstring{$f'=|f|$}{f' = Abs(f)}}
+
+\begin{counterexamplebox}
+\textbf{Task.} Solve the first-order ODE
+\[
+  f'(x)=\sqrt{f(x)^2}.
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+  f(x)=C_1e^{-x}\quad\text{or}\quad f(x)=C_1e^x,
+  \qquad C_1\in\mathbb{R}.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+  f(x)=0,\qquad f(x)=C e^x\ (C>0),\qquad
+  f(x)=C e^{-x}\ (C<0).
+\]
+
+\medskip
+\textbf{Explanation.} For real-valued solutions, the equation is
+\(f'=|f|\).  A nonzero solution cannot change sign, so a negative solution
+satisfies \(f'=-f\) and a positive solution satisfies \(f'=f\).  
+
+\medskip
+\textbf{Likely root cause.} In \nolinkurl{sympy/solvers/ode/ode.py},
+\texttt{odesimp} appears to force a branch-sensitive implicit separable
+solution through \texttt{solve(..., force=True)} and then returns explicit
+branches without the required sign condition.  This is a new instance of a
+known failure mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-007-ode-solver-loses-signs-in-f-abs-f}
+\end{counterexamplebox}
+
+\end{document}

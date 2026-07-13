@@ -1,0 +1,92 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 41: Unsound Extended-Real Assumption for a Reciprocal}
+
+\begin{counterexamplebox}
+\textbf{Task.} Decide whether the reciprocal is extended real for an arbitrary
+real symbol \(xr\).
+\[
+\operatorname{ask}\!\left(Q.\operatorname{extended\_real}\!\left(\frac{1}{xr-1}\right)\right)
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+\operatorname{ask}\!\left(Q.\operatorname{extended\_real}\!\left(\frac{1}{xr-1}\right)\right)=\mathrm{True}.
+\]
+
+\medskip
+\textbf{Correct answer.} SymPy should not return \(\mathrm{True}\); the answer
+should be \(\mathrm{False}\) or unknown without a nonzero-denominator assumption.
+
+\medskip
+\textbf{Explanation.} The real substitution \(xr=1\) is allowed, but it gives
+\[
+\frac{1}{1-1}=\mathrm{zoo},
+\]
+and \(\mathrm{zoo}\) is not in the extended real line
+\(\mathbb{R}\cup\{-\infty,+\infty\}\).  Thus the universal predicate conclusion
+is contradicted by a valid real specialization.
+
+\medskip
+\textbf{Likely root cause.} The \texttt{ExtendedRealPredicate} handler in
+\nolinkurl{sympy/assumptions/handlers/sets.py} applies closed-group reasoning to
+\texttt{Pow}, so \((xr-1)^{-1}\) is accepted because both its base and exponent
+are extended real; it does not require the reciprocal base to be provably
+nonzero.  This belongs to a known reciprocal-with-possibly-zero-denominator
+unsoundness family in the assumptions handlers, publicly tracked as issue
+\href{https://github.com/sympy/sympy/issues/28150}{\#28150} (open) with PRs
+\href{https://github.com/sympy/sympy/pull/28164}{\#28164} (closed) and
+\href{https://github.com/sympy/sympy/pull/28377}{\#28377} (open).  Those address
+\(Q.\operatorname{real}\) on a concrete-number base \texttt{Pow(0, -1)}; this
+\(Q.\operatorname{extended\_real}\) symbolic-base manifestation is a distinct,
+still-unfixed instance that the referenced fixes would not resolve.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-041-unsound-extended-real-assumption-for-a-reciprocal}
+\end{counterexamplebox}
+
+\end{document}

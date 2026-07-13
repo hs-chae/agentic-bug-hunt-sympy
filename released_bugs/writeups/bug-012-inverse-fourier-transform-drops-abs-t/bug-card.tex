@@ -1,0 +1,84 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 12: inverse Fourier transform drops \texorpdfstring{$|t|$}{Abs(t)}}
+
+\begin{counterexamplebox}
+\textbf{Task.} Compute the inverse Fourier transform of the Lorentzian
+\[
+  F(w)=\frac{2}{1+4\pi^2w^2}.
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+  \operatorname{inverse\_fourier\_transform}(F(w),w,t)=e^{-t}.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+  \operatorname{inverse\_fourier\_transform}(F(w),w,t)=e^{-|t|}.
+\]
+
+\medskip
+\textbf{Explanation.} The input \(F(w)\) is real and even in \(w\), so its
+inverse Fourier transform should be real and even in \(t\).  SymPy returns
+\(e^{-t}\), which is not even: for example, at \(t=-1\) it gives \(e\), while
+the expected value is \(e^{-1}\).  The missing absolute value changes the
+answer on the negative half-line.
+
+\medskip
+\textbf{Likely root cause.} In
+\nolinkurl{sympy/integrals/transforms.py}, \texttt{\_fourier\_transform}
+appears to select the first branch of a conditional \texttt{Piecewise} integral,
+then the public inverse transform drops the condition under the default
+\texttt{noconds=True}.  This is a new instance of a known failure mode. 
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-012-inverse-fourier-transform-drops-abs-t}
+\end{counterexamplebox}
+
+\end{document}

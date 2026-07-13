@@ -1,0 +1,76 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 49: Matrix.solve Methods Return Malformed Results}
+
+\begin{counterexamplebox}
+\textbf{Task.} Solve a singular but consistent linear system with explicit \(\SymPy\) matrix-solver methods.
+\[
+A=\begin{bmatrix}1&1\\2&2\end{bmatrix},\qquad
+b=\begin{bmatrix}1\\2\end{bmatrix},\qquad
+A\,u=b .
+\]
+
+\medskip
+\textbf{SymPy's answer.} \(\texttt{A.solve(b, method="QR")}=\begin{bmatrix}1\end{bmatrix}\), while \(\texttt{method="LDL"}\) and \(\texttt{method="CRAMER"}\) return \(\begin{bmatrix}\mathrm{nan}\\ \mathrm{nan}\end{bmatrix}\).
+
+\medskip
+\textbf{Correct answer.} The system is non-unique:
+\[
+u=\begin{bmatrix}1-t\\ t\end{bmatrix},\qquad t\in\mathbb{C},
+\]
+so \texttt{Matrix.solve} should reject the solve or return a documented full solution representation.
+
+\medskip
+\textbf{Explanation.} The second equation is twice the first, so \(x+y=1\) is the only independent constraint. A one-entry vector cannot solve a two-unknown system, and substituting the \(\mathrm{nan}\) vector gives \(\mathrm{nan}\) residuals rather than \(0\).
+
+\medskip
+\textbf{Likely root cause.} The diagnosed dispatch path in \nolinkurl{sympy/matrices/solvers.py} applies the non-unique-solution guard to the default \texttt{GJ}/\texttt{GE} path but sends \texttt{QR}, \texttt{LDL}, and \texttt{CRAMER} directly to method-specific solvers. Those branches then return a reduced-shape result or divide by zero, making this a new failure mode with no public precedent.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-049-matrix-solve-methods-return-malformed-results}
+\end{counterexamplebox}
+
+\end{document}

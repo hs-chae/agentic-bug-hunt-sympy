@@ -1,0 +1,85 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 47: linsolve misses the a = 0 branch}
+
+\begin{counterexamplebox}
+\textbf{Task.} Solve the symbolic-parameter linear equation for \(x\):
+\[
+a x-a=0.
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+\operatorname{linsolve}([a x-a],[x])=\{(1,)\}.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+a\ne 0:\ x=1,
+\qquad
+a=0:\ x\ \text{arbitrary}.
+\]
+
+\medskip
+\textbf{Explanation.} The equation factors as \(a(x-1)=0\).  When \(a=0\),
+it becomes \(0=0\), so \(x=2\) is a valid solution; after substituting
+\(a=0\), SymPy's reported set still contains only \((1,)\).
+
+\medskip
+\textbf{Likely root cause.} The diagnosis identifies
+\nolinkurl{sympy/polys/matrices/linsolve.py}: the sparse linear solver builds
+the coefficient domain as \(\mathbb{Z}(a)\), where \(a\) is treated as
+invertible, so RREF divides by \(a\) and returns only the generic branch.  This
+is an instance of the known symbolic-coefficient missing-\(a=0\)-branch problem
+tracked in open issue \href{https://github.com/sympy/sympy/issues/16861}{sympy/sympy\#16861}.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-047-linsolve-misses-the-a-0-branch}
+\end{counterexamplebox}
+
+\end{document}

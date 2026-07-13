@@ -1,0 +1,184 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 43: Collapsed Range for \texorpdfstring{$\cos(x)/\cot(x)$}{cos(x)/cot(x)}}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import S, cos, cot, pi, sqrt, symbols
+from sympy.calculus.util import continuous_domain, function_range
+
+x = symbols("x")
+expr = cos(x)/cot(x)
+
+dom = continuous_domain(expr, x, S.Reals)
+rng = function_range(expr, x, S.Reals)
+
+print("continuous_domain(cos(x)/cot(x), x, S.Reals) =", dom)
+print("function_range(cos(x)/cot(x), x, S.Reals) =", rng)
+print("value at pi/3 =", expr.subs(x, pi/3))
+print("range contains sqrt(3)/2 =", rng.contains(sqrt(3)/2))
+print("value at pi/2 =", expr.subs(x, pi/2))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+SymPy version: 1.14.0
+continuous_domain(cos(x)/cot(x), x, S.Reals) = Reals
+function_range(cos(x)/cot(x), x, S.Reals) = {0}
+value at pi/3 = sqrt(3)/2
+range contains sqrt(3)/2 = False
+value at pi/2 = nan
+\end{lstlisting}
+
+SymPy reports that the real domain is all of \(\mathbb{R}\) and that the range is the singleton \(\{0\}\). Both conclusions are inconsistent with direct substitution: \(x=\pi/3\) is a defined point with value \(\sqrt{3}/2\), while \(x=\pi/2\) is not a defined point of the quotient.
+
+\subsection{Expected Behavior}
+
+The real domain should exclude points where the quotient is undefined, in particular the zeros of \(\cot(x)\) and the poles of \(\cot(x)\). The returned range should include nonzero values attained at defined points, including \(\sqrt{3}/2\). More precisely, on its natural real domain,
+\[
+  \frac{\cos x}{\cot x} = \sin x
+\]
+where the quotient is defined, but the original quotient is undefined at multiples of \(\pi/2\). Its range is therefore
+\[
+  (-1,1),
+\]
+not \(\{0\}\).
+
+\subsection{Mathematical Explanation}
+
+Using \(\cot x = \cos x/\sin x\), the quotient satisfies
+\[
+  \frac{\cos x}{\cot x}
+  = \frac{\cos x}{\cos x/\sin x}
+  = \sin x
+\]
+only at points where the original expression is defined. The original expression has denominator \(\cot x\), so all zeros of \(\cot x\), namely \(x=\pi/2+k\pi\), must be excluded. The expression also inherits undefined points from \(\cot x\), namely \(x=k\pi\). Thus the natural real domain is
+\[
+  \mathbb{R}\setminus \left\{ \frac{k\pi}{2} : k\in\mathbb{Z} \right\}.
+\]
+
+At the defined point \(x=\pi/3\),
+\[
+  \frac{\cos(\pi/3)}{\cot(\pi/3)}
+  = \frac{1/2}{1/\sqrt{3}}
+  = \frac{\sqrt{3}}{2}.
+\]
+Therefore a range of \(\{0\}\) is not an equivalent representation, a harmless simplification, or a branch-choice artifact: it omits a directly attained real value. Since the original quotient removes the points where \(\sin x=\pm 1\), the endpoint values \(\pm 1\) are approached but not attained, giving the range \((-1,1)\).
+
+\subsection{Source-Level Diagnosis}
+
+\begin{sloppypar}
+The diagnosis identifies two coupled steps in the calculus utilities. The relevant files are \nolinkurl{sympy/calculus/singularities.py} and \nolinkurl{sympy/calculus/util.py}. The traced public call path is through \texttt{continuous\_domain} and \texttt{function\_range}. The former applies function-specific constraints and subtracts the singularities of the expression; the latter computes a period, reduces the infinite real domain to one period, calls \texttt{continuous\_domain}, samples interval endpoints, solves \(f'(x)=0\), and builds the range from those values.
+\end{sloppypar}
+
+The first faulty step is in \nolinkurl{sympy/calculus/singularities.py}, where the singularity finder rewrites trigonometric functions before searching for negative powers:
+
+\begin{lstlisting}[style=bugpython]
+e = expression.rewrite([sec, csc, cot, tan], cos)
+...
+for i in e.atoms(Pow):
+    if i.exp.is_negative:
+        sings += solveset(i.base, symbol, domain)
+\end{lstlisting}
+
+For \(\cos(x)/\cot(x)\), rewriting \(\cot(x)\) as \(\cos(x)/\sin(x)\) turns the quotient into an expression equivalent to \(\sin(x)\) only away from the discarded denominator constraints. The condition \(\cot(x)=0\), which excludes \(x=\pi/2+k\pi\), is lost, so \texttt{singularities} returns \texttt{EmptySet} and \texttt{continuous\_domain} reports all reals.
+
+\begin{sloppypar}
+The second faulty step is in \nolinkurl{sympy/calculus/util.py}. After the missed singularities, \texttt{function\_range} treats the periodic domain as a closed interval such as \([0,2\pi]\). Endpoint evaluation gives \(0\) at both ends. The recorded diagnosis notes that solving \(f'(x)=0\) on that interval returns no critical points for the unsimplified expression. The range is then constructed as the singleton \(\{0\}\), missing interior values such as \(\sqrt{3}/2\).
+\end{sloppypar}
+
+A plausible fix direction supported by the diagnosis is to preserve denominator constraints before applying trigonometric rewrites in \texttt{singularities}, or to add explicit zero and pole sets for \(\tan\), \(\cot\), \(\sec\), and \(\csc\). The diagnosis also notes that \texttt{function\_range} would be more robust if it treated undefined points inside a periodic interval as domain cuts before endpoint and critical-value sampling.
+
+\subsection{Additional Failing Instances}
+
+The same failure appears for the representative expression and five shifted instantiations:
+\[
+  f_a(x)=\frac{\cos(x+a)}{\cot(x+a)}, \qquad a\in\{0,1,2,3,4,5\}.
+\]
+For each shift, the sample point \(x=\pi/3-a\) is defined and has value \(\sqrt{3}/2\), while \(x=\pi/2-a\) is undefined. The same reasoning applies after the shift: the quotient agrees with \(\sin(x+a)\) only on the original quotient's punctured domain, so a singleton range \(\{0\}\) and a full-real domain are both invalid.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.32\linewidth}>{\raggedright\arraybackslash}p{0.30\linewidth}>{\raggedright\arraybackslash}p{0.28\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\( \cos(x)/\cot(x) \) & Reports domain \(\mathbb{R}\) and range \(\{0\}\); omits \(\sqrt{3}/2\) & Exclude \(x=k\pi/2\); include \(\sqrt{3}/2\); range \((-1,1)\) \\
+\( \cos(x+1)/\cot(x+1) \) & Same collapse at \(x=\pi/3-1\) & Exclude \(x=k\pi/2-1\); include \(\sqrt{3}/2\); range \((-1,1)\) \\
+\( \cos(x+2)/\cot(x+2) \) & Same collapse at \(x=\pi/3-2\) & Exclude \(x=k\pi/2-2\); include \(\sqrt{3}/2\); range \((-1,1)\) \\
+\( \cos(x+3)/\cot(x+3) \) & Same collapse at \(x=\pi/3-3\) & Exclude \(x=k\pi/2-3\); include \(\sqrt{3}/2\); range \((-1,1)\) \\
+\( \cos(x+4)/\cot(x+4) \) & Same collapse at \(x=\pi/3-4\) & Exclude \(x=k\pi/2-4\); include \(\sqrt{3}/2\); range \((-1,1)\) \\
+\( \cos(x+5)/\cot(x+5) \) & Same collapse at \(x=\pi/3-5\) & Exclude \(x=k\pi/2-5\); include \(\sqrt{3}/2\); range \((-1,1)\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check. The closest public material found was SymPy's calculus documentation for \texttt{continuous\_domain} and \texttt{function\_range}; no public report was identified for \texttt{function\_range(cos(x)/cot(x), x, S.Reals)} returning \(\{0\}\), for \texttt{continuous\_domain(cos(x)/cot(x), x, S.Reals)} returning all reals, or for this exact reciprocal-trigonometric singularity loss. The deduplication verdict is therefore a new failure mode with no public precedent. The bug remains individually actionable because it supplies a minimal reproducible counterexample and a focused regression test for the calculus domain/range utilities.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+from sympy import S, cos, cot, pi, sqrt, symbols
+from sympy.calculus.util import continuous_domain, function_range
+
+
+@pytest.mark.parametrize("a", [0, 1, 2, 3, 4, 5])
+def test_function_range_cos_over_cot_contains_defined_sample(a):
+    x = symbols("x")
+    expr = cos(x + a)/cot(x + a)
+
+    assert expr.subs(x, pi/3 - a) == sqrt(3)/2
+    assert expr.subs(x, pi/2 - a) is S.NaN
+    assert continuous_domain(expr, x, S.Reals) != S.Reals
+    assert function_range(expr, x, S.Reals).contains(sqrt(3)/2) is S.true
+\end{lstlisting}
+
+\end{document}

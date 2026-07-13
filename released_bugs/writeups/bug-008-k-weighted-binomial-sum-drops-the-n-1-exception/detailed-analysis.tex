@@ -1,0 +1,223 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 8: K-Weighted Alternating Binomial Sum Misses the \texorpdfstring{\(n=1\)}{n=1} Case}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import binomial, summation, symbols
+
+n = symbols("n", integer=True, nonnegative=True)
+k = symbols("k", integer=True)
+
+closed = summation((-1)**k*k*binomial(n, k), (k, 0, n))
+direct_n1 = sum(((-1)**j)*j*binomial(1, j) for j in range(0, 2))
+
+print("closed form =", closed)
+print("closed at n=1 =", closed.subs(n, 1))
+print("direct finite sum at n=1 =", direct_n1)
+print("difference =", closed.subs(n, 1) - direct_n1)
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+closed form = 0
+closed at n=1 = 0
+direct finite sum at n=1 = -1
+difference = 1
+\end{lstlisting}
+
+SymPy returns the unconditional closed form \(0\).  Substituting \(n=1\) into
+that result gives \(0\), while direct evaluation of the finite sum at \(n=1\)
+gives \(-1\).  The returned scalar therefore loses a parameter value allowed
+by the declared assumption \(n \in \mathbb{Z}_{\ge 0}\).
+
+\subsection{Expected Behavior}
+
+For a nonnegative integer symbol \(n\), the result should preserve the
+exceptional \(n=1\) value.  A correct result for the representative sum is
+\[
+  \operatorname{Piecewise}\bigl((-1,\operatorname{Eq}(n,1)),(0,\operatorname{Ne}(n,1))\bigr),
+  \qquad n\in\mathbb{Z}_{\ge 0},
+\]
+or any equivalent expression that evaluates to \(-1\) at \(n=1\) and \(0\) at
+all other nonnegative integer values of \(n\).
+
+\subsection{Mathematical Explanation}
+
+Differentiate the binomial identity
+\[
+  (1+t)^n=\sum_{k=0}^{n}\binom{n}{k}t^k
+\]
+with respect to \(t\).  This gives
+\[
+  n(1+t)^{n-1}=\sum_{k=0}^{n} k\binom{n}{k}t^{k-1}.
+\]
+Multiplying by \(t\) and setting \(t=-1\) yields
+\[
+  \sum_{k=0}^{n}(-1)^k k\binom{n}{k}
+  = -n(1-1)^{n-1}.
+\]
+For \(n>1\), this is \(0\).  For \(n=1\), however, the differentiated
+identity must be evaluated as the original finite sum:
+\[
+  \sum_{k=0}^{1}(-1)^k k\binom{1}{k}
+  = 0\binom{1}{0} - 1\binom{1}{1}
+  = -1.
+\]
+The case \(n=0\) is also \(0\), since the only summand contains the factor
+\(k=0\).  Thus the scalar \(0\) is not an equivalent simplification over the
+declared nonnegative-integer domain; it has the wrong value at \(n=1\).
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis locates the failure in SymPy's concrete summation path.  The
+public call constructs a \texttt{Sum} and calls \texttt{doit}.  The relevant
+source files are:
+
+\begin{center}
+\begin{tabular}{@{}l@{}}
+\nolinkurl{sympy/concrete/summations.py}\\
+\nolinkurl{sympy/concrete/gosper.py}
+\end{tabular}
+\end{center}
+
+Since the range length is symbolic, evaluation reaches \texttt{eval\_sum} and
+then \texttt{eval\_sum\_\allowbreak symbolic}.  The traced call path reaches
+the Gosper branch around \nolinkurl{sympy/concrete/summations.py} lines
+1236--1256, which calls \texttt{gosper\_sum}.
+
+For the summand \((-1)^k k\binom{n}{k}\), the traced Gosper certificate is
+\[
+  g = -\frac{k-1}{n-1}.
+\]
+This certificate has a pole at the parameter value \(n=1\).  The diagnosis
+identifies the immediate faulty endpoint calculation in
+\nolinkurl{sympy/concrete/gosper.py}:
+
+\begin{lstlisting}[style=bugpython]
+result = (f*(g + 1)).subs(k, b) - (f*g).subs(k, a)
+\end{lstlisting}
+
+\texttt{gosper\_sum} substitutes the symbolic endpoints and simplifies the
+generic telescoping result to the scalar \(0\), without recording that the
+certificate is invalid at \(n=1\).  The caller has logic to wrap some results
+in \texttt{Piecewise} when visible denominators remain in \texttt{Mul} or
+\texttt{Add} results, but here the endpoint expression has already simplified
+to \(0\).  As a result, the excluded parameter value is no longer visible to
+\texttt{eval\_sum\_\allowbreak symbolic}, and the generic value becomes the
+final answer.
+
+The suggested fix direction is to track parameter denominators introduced by
+\texttt{gosper\_term} or \texttt{gosper\_sum}, and either emit a conditional
+result or fall back to direct evaluation at excluded parameter values.  For
+this example, the final result needs an \(n=1\) branch.
+
+\subsection{Additional Failing Instances}
+
+The independent verification checks the same endpoint failure for
+\[
+  \sum_{k=0}^{n} (-1)^k k^p \binom{n}{k},
+  \qquad p=1,2,3,4,5,6.
+\]
+For each listed power, SymPy returns a closed form whose value at \(n=1\) is
+\(0\).  The direct finite sum at \(n=1\) is the same in all cases with
+\(p\ge 1\), because the \(k=0\) term is \(0^p\binom{1}{0}=0\) and the \(k=1\)
+term is \((-1)1^p\binom{1}{1}=-1\).
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.44\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\sum_{k=0}^{n}(-1)^k k\binom{n}{k}\), evaluated at \(n=1\) & Closed form gives \(0\) & Direct sum gives \(-1\) \\
+\(\sum_{k=0}^{n}(-1)^k k^2\binom{n}{k}\), evaluated at \(n=1\) & Closed form gives \(0\) & Direct sum gives \(-1\) \\
+\(\sum_{k=0}^{n}(-1)^k k^3\binom{n}{k}\), evaluated at \(n=1\) & Closed form gives \(0\) & Direct sum gives \(-1\) \\
+\(\sum_{k=0}^{n}(-1)^k k^4\binom{n}{k}\), evaluated at \(n=1\) & Closed form gives \(0\) & Direct sum gives \(-1\) \\
+\(\sum_{k=0}^{n}(-1)^k k^5\binom{n}{k}\), evaluated at \(n=1\) & Closed form gives \(0\) & Direct sum gives \(-1\) \\
+\(\sum_{k=0}^{n}(-1)^k k^6\binom{n}{k}\), evaluated at \(n=1\) & Closed form gives \(0\) & Direct sum gives \(-1\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check.  Besides
+general documentation and background for Gosper summation, the open issue
+\href{https://github.com/sympy/sympy/issues/29731}{sympy/sympy\#29731}
+(``A summation that evaluates to 0 even though it can be nonzero depending on
+the variable'', created 2026-05-02) is a near-exact public report of this same
+behavior: its reproducer returns the scalar \(0\) for an \((-1)\)-weighted
+\(i^k\) binomial sum that is nonzero at the singular parameter value, with the
+same \texttt{gosper\_sum} lost-endpoint-exception root cause.  That issue
+predates this bundle, so the deduplication verdict is a new instance of an
+already-reported failure family: symbolic Gosper summation can require
+parameter conditions, and this candidate contributes the explicit
+\((-1)^k k\binom{n}{k}\) instantiation, the missing \(n=1\) branch, and the
+\(k^p\) generalization, all of which remain individually actionable as a
+cross-link to \#29731 and as a regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+from sympy import binomial, summation, symbols
+
+n = symbols("n", integer=True, nonnegative=True)
+k = symbols("k", integer=True)
+CASES = [1, 2, 3, 4, 5, 6]
+
+@pytest.mark.parametrize("power", CASES)
+def test_weighted_alternating_binomial_sum_preserves_n1_exception(power):
+    closed = summation((-1)**k*k**power*binomial(n, k), (k, 0, n))
+    direct = sum(((-1)**j)*(j**power)*binomial(1, j) for j in range(2))
+    assert closed.subs(n, 1) == direct
+\end{lstlisting}
+
+\end{document}

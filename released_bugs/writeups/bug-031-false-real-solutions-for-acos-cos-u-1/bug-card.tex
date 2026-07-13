@@ -1,0 +1,81 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\date{}
+
+\begin{document}
+
+\author{}
+\maketitle
+
+\section*{Bug 31: False Real Solutions for \texttt{acos(cos(u)) = -1}}
+
+\begin{counterexamplebox}
+\textbf{Task.} Solve the real equation
+\[
+  \operatorname{acos}(\cos u) = -1.
+\]
+
+\medskip
+\textbf{SymPy's answer.} \(\operatorname{solveset}(\operatorname{acos}(\cos u)=-1,u,\mathbb{R})\)
+returns
+\[
+  \{2\pi n+1:n\in\mathbb{Z}\}\cup
+  \{2\pi n-1+2\pi:n\in\mathbb{Z}\}.
+\]
+
+\medskip
+\textbf{Correct answer.} The solution set is \(\varnothing\).
+
+\medskip
+\textbf{Explanation.} For real \(u\), \(\cos u\in[-1,1]\) and the principal
+arccosine has range \([0,\pi]\), so \(\operatorname{acos}(\cos u)\) is never negative.
+For example, a returned representative \(u=1\) gives
+\(\operatorname{acos}(\cos 1)-(-1)=2\), not zero.
+
+\medskip
+\textbf{Likely root cause.} The diagnosis identifies
+\nolinkurl{sympy/solvers/solveset.py}: \texttt{\_invert\_real} applies
+\(\operatorname{acos}^{-1}=\cos\) to the target before checking that \(-1\) lies in
+\(\operatorname{acos}\)'s principal range.  This is a new instance of a known failure mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-031-false-real-solutions-for-acos-cos-u-1}
+\end{counterexamplebox}
+
+\end{document}

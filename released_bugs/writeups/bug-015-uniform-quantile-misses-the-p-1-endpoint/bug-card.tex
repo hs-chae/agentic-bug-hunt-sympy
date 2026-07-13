@@ -1,0 +1,80 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 15: uniform quantile misses the \texorpdfstring{\(p=1\)}{p = 1} endpoint}
+
+\begin{counterexamplebox}
+\textbf{Task.} Compute the \(p=1\) quantile of a unit uniform random variable.
+\[
+U\sim\operatorname{Uniform}(0,1),\qquad Q(1)=\operatorname{quantile}(U)(1).
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+Q(1)=\varnothing.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+Q(1)=1.
+\]
+
+\medskip
+\textbf{Explanation.} The documented quantile definition is
+\[
+Q(p)=\inf\{x\in\mathbb{R}:p\leq F(x)\},
+\]
+where \(F\) is the cumulative distribution function.  For \(U\sim\operatorname{Uniform}(0,1)\), the CDF satisfies \(F(x)<1\) for \(x<1\) and \(F(1)=1\).  Thus \(Q(1)=1\).  SymPy's quantile API reports quantiles as sets, so the expected API-level result is \(\{1\}\); the alarming behavior is that it returns \(\varnothing\), meaning that no value is reported for this endpoint quantile.
+
+\medskip
+\textbf{Likely root cause.} The generic continuous quantile implementation in \nolinkurl{sympy/stats/crv.py} solves \(F(x)=p\) over the support; for \(\operatorname{Uniform}(0,1)\) this produces an inverse intersected with \texttt{Interval.Ropen(0, 1)}, so substituting \(p=1\) drops the endpoint.  Deduplication frames this as a new instance of a known failure mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-015-uniform-quantile-misses-the-p-1-endpoint}
+\end{counterexamplebox}
+
+\end{document}

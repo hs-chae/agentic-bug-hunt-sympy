@@ -1,0 +1,248 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\date{}
+
+\begin{document}
+
+\author{}
+\maketitle
+
+\section{Bug 50: Wrong negative-branch antiderivative for \texorpdfstring{$\operatorname{asec}(x)$}{asec(x)}}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import N, asec, diff, integrate, simplify, symbols
+
+x = symbols("x", real=True)
+residual = diff(integrate(asec(x), x), x) - asec(x)
+
+print("residual at x=-2:", simplify(residual.subs(x, -2)))
+print("numeric residual:", N(residual.subs(x, -2), 50))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+residual at x=-2: -2*sqrt(3)/3
+numeric residual: -1.1547005383792515290182975610039149112952035025403
+\end{lstlisting}
+
+The expression returned by \texttt{integrate(asec(x), x)} therefore does not
+differentiate back to \texttt{asec(x)} at the nonsingular real point \(x=-2\).
+The residual is exact and nonzero, so this is not merely a presentation issue
+or a failure to simplify to a different but equivalent form.
+
+\subsection{Expected Behavior}
+
+For real \(x\) on the smooth interval \(x<-1\), any antiderivative returned for
+\(\operatorname{asec}(x)\) should satisfy
+\[
+  \frac{d}{dx}F(x)=\operatorname{asec}(x).
+\]
+In particular,
+\[
+  \left.
+  \left(\frac{d}{dx}\operatorname{integrate}(\operatorname{asec}(x),x)
+  -\operatorname{asec}(x)\right)\right|_{x=-2}
+  = 0.
+\]
+
+\subsection{Mathematical Explanation}
+
+Using integration by parts gives
+\[
+  \int \operatorname{asec}(x)\,dx
+  = x\operatorname{asec}(x)
+    - \int \frac{1}{x\sqrt{1-1/x^2}}\,dx .
+\]
+On the negative real branch \(x<-1\),
+\[
+  \sqrt{1-\frac{1}{x^2}}=\frac{\sqrt{x^2-1}}{|x|}
+  =-\frac{\sqrt{x^2-1}}{x},
+\]
+so the remaining radical integrand is
+\[
+  \frac{1}{x\sqrt{1-1/x^2}}
+  =-\frac{1}{\sqrt{x^2-1}}.
+\]
+A real primitive for this subintegrand on \(x<-1\) is
+\(\operatorname{acosh}(|x|)\), since
+\[
+  \frac{d}{dx}\operatorname{acosh}(|x|)
+  =-\frac{1}{\sqrt{x^2-1}}.
+\]
+Thus a branch-correct antiderivative on this interval is
+\[
+  x\operatorname{asec}(x)-\operatorname{acosh}(|x|)+C.
+\]
+
+The diagnosed SymPy expression instead contains the real factor
+\[
+  \frac{x}{|x|}\operatorname{acosh}(|x|),
+\]
+whose derivative has the opposite sign on \(x<-1\).  Subtracting that wrong
+subprimitive from the integration-by-parts result makes the final derivative
+\[
+  \operatorname{asec}(x)-\frac{2}{\sqrt{x^2-1}}
+\]
+on the negative branch.  At \(x=-2\), this gives the observed residual
+\(-2/\sqrt{3}=-2\sqrt{3}/3\).
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis identifies the branch error in the Meijer-G and hyperexpand path,
+not in \texttt{asec.fdiff} or in the integration-by-parts rule itself.  The
+public call \texttt{integrate(asec(x), x)} first uses manual integration by
+parts, producing
+\[
+  x\operatorname{asec}(x)
+  - \int \frac{1}{x\sqrt{1-1/x^2}}\,dx .
+\]
+The default integration machinery in
+\nolinkurl{sympy/integrals/integrals.py} then recursively evaluates the
+remaining unevaluated subintegral.  Risch and heurisch do not evaluate that
+radical integral, so the Meijer path calls \texttt{meijerint\_indefinite};
+\texttt{\_rewrite1} rewrites the radical integrand as a Meijer-G term, and
+\texttt{hyperexpand} expands the integrated term.
+
+The source-level notes locate the problematic continuation in
+\nolinkurl{sympy/functions/special/hyper.py}.  In particular,
+\texttt{HyperRep.\_eval\_rewrite\_as\_nonrep} chooses a split based only on
+\(\lvert x\rvert>1\), while \texttt{HyperRep\_asin1.\_expr\_big} is called with
+\(z=x^2\).  For real \(x\), \(\sqrt{z}\) simplifies to \(\operatorname{Abs}(x)\),
+but the surrounding Slater/hyperexpand prefactor still contributes a factor of
+\(x\).  The expanded primitive therefore contains
+\[
+  \frac{x\,\operatorname{acosh}(|x|)}{|x|}
+  - \frac{i\pi x}{2|x|}.
+\]
+The imaginary branch constant does not affect the derivative away from zero;
+the real multiplier \(x/|x|\) is the part that flips the derivative on
+\(x<-1\).  A plausible fix direction supported by the diagnosis is for the
+hypergeometric representative expansion to preserve the square-root branch, or
+to split by the sign of the real variable rather than only by \(x^2>1\), so that
+the outer real intervals reduce to \(\operatorname{acosh}(|x|)\) rather than
+\(x\operatorname{acosh}(|x|)/|x|\).  A defensive integration-layer check could
+also reject a Meijer indefinite result when differentiating it fails to recover
+the integrand under the active assumptions, but the source branch error appears
+to be in the hyperexpand representative continuation.
+
+\begin{lstlisting}[style=bugpython]
+S.NegativeOne**n*((S.Half - n)*pi/sqrt(z)
+                  + I*acosh(sqrt(z))/sqrt(z))
+\end{lstlisting}
+
+\subsection{Additional Failing Instances}
+
+The independent verification checks the representative point \(x=-2\) and five
+additional negative real inputs on the same smooth branch \(x<-1\).  For each
+case, SymPy's returned primitive differentiates to
+\(\operatorname{asec}(x)-2/\sqrt{x^2-1}\) rather than to
+\(\operatorname{asec}(x)\).  The expected residual is therefore zero for every
+row, because all listed points lie away from the branch endpoint and any valid
+antiderivative must differentiate back to the original integrand on that
+interval.
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.44\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(x=-2\), \(\frac{d}{dx}\operatorname{integrate}(\operatorname{asec}(x),x)-\operatorname{asec}(x)\) & residual \(=-2\sqrt{3}/3\) & residual \(=0\) \\
+\(x=-3\), same residual expression & residual \(=-\sqrt{2}/2\) & residual \(=0\) \\
+\(x=-3/2\), same residual expression & residual \(=-4\sqrt{5}/5\) & residual \(=0\) \\
+\(x=-4\), same residual expression & residual \(=-2\sqrt{15}/15\) & residual \(=0\) \\
+\(x=-5/2\), same residual expression & residual \(=-4\sqrt{21}/21\) & residual \(=0\) \\
+\(x=-10\), same residual expression & residual \(=-2\sqrt{11}/33\) & residual \(=0\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check.  This
+candidate belongs to a known family.  The \texttt{integrate(asec(x), x)}
+capability under test was added by pull request \#19993 (``upgrades to
+manualintegrate'', merged 2020-09-02,
+\url{https://github.com/sympy/sympy/pull/19993}), which closed issue \#14329
+(``Integration of asec and acsc'',
+\url{https://github.com/sympy/sympy/issues/14329}) and issue \#19983 (``Sympy
+doesn't Integrate when expr contains asec / acsc'',
+\url{https://github.com/sympy/sympy/issues/19983}); issue \#14329 already shows
+the \texttt{Piecewise}/\(\operatorname{acosh}\) shape whose \texttt{real=True}
+variant is the buggy primitive here.  The same wrong-real-branch
+Meijer/\(\operatorname{acosh}\) mechanism is reported in the still-open issue
+\#10453 (``integrate return wrong answer (inverse trigonometric functions)'',
+\url{https://github.com/sympy/sympy/issues/10453}).  The deduplication verdict
+is therefore \emph{known family, specifically new instance}: no public issue,
+pull request, Stack Overflow post, mailing-list discussion, or release-note
+entry was identified for \texttt{integrate(asec(x), x)} producing a
+\emph{nonzero} derivative residual on the smooth negative real branch
+\(x<-1\).  This exact reproducible integration failure remains individually
+actionable and suitable for a dedicated regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+
+from sympy import S, asec, diff, integrate, simplify, symbols
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        S(-2),
+        S(-3),
+        -S(3) / 2,
+        S(-4),
+        -S(5) / 2,
+        S(-10),
+    ],
+)
+def test_integrate_asec_antiderivative_on_negative_real_branch(value):
+    x = symbols("x", real=True)
+    residual = diff(integrate(asec(x), x), x) - asec(x)
+    assert simplify(residual.subs(x, value)) == 0
+\end{lstlisting}
+
+\end{document}

@@ -1,0 +1,84 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 56: Singularities misses loggamma pole at zero}
+
+\begin{counterexamplebox}
+\textbf{Task.} Find the singularities of \(\operatorname{loggamma}(x)\) over the
+complex domain.
+\[
+    \operatorname{singularities}(\operatorname{loggamma}(x), x, \mathbb{C})
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+    \operatorname{singularities}(\operatorname{loggamma}(x), x, \mathbb{C})
+    = \varnothing
+\]
+
+\medskip
+\textbf{Correct answer.} The singularity set must contain \(0\); more generally
+it contains the nonpositive integers \(\{0,-1,-2,\ldots\}\).
+
+\medskip
+\textbf{Explanation.} \(\operatorname{loggamma}(0)\) evaluates to \(\infty\),
+and the recorded right-hand limit satisfies
+\(\lim_{x\to 0^+}\operatorname{loggamma}(x)=\infty\). Thus \(x=0\) is an
+actual pole inherited from \(\Gamma(x)\), not a removable point or an equivalent
+empty-set representation.
+
+\medskip
+\textbf{Likely root cause.} The diagnosis traces the call to
+\texttt{sympy/calculus/singularities.py}, where \texttt{singularities} scans
+only selected structural patterns such as \texttt{Pow} and \texttt{log} atoms;
+\texttt{loggamma(x)} is not rewritten to \texttt{log(gamma(x))} and has no
+special branch. This is a new failure mode with no public precedent.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-056-singularities-misses-loggamma-pole-at-zero}
+\end{counterexamplebox}
+
+\end{document}

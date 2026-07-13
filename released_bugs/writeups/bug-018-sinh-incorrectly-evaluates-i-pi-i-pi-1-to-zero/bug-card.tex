@@ -1,0 +1,82 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\date{}
+
+\begin{document}
+
+\author{}
+\maketitle
+
+\section*{Bug 18: sinh incorrectly evaluates \texorpdfstring{$I\pi+I(\pi-1)$}{I*pi + I*(pi - 1)} to zero}
+
+\begin{counterexamplebox}
+\textbf{Task.} Evaluate a hyperbolic sine at a split imaginary-period argument.
+\[
+\sinh(I\pi + I(\pi-1))
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+\sinh(I\pi + I(\pi-1)) = 0.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+\sinh(I\pi + I(\pi-1)) = -I\sin(1).
+\]
+
+\medskip
+\textbf{Explanation.} The argument satisfies
+\(I\pi+I(\pi-1)=I(2\pi-1)\), and \(\sinh(It)=I\sin(t)\). Hence the value is
+\(I\sin(2\pi-1)=-I\sin(1)\), not zero.
+
+\medskip
+\textbf{Likely root cause.} The diagnosis identifies
+\texttt{\_peeloff\_pi} in \nolinkurl{sympy/functions/elementary/trigonometric.py}
+as peeling the \(\pi\)-coefficient from the nested addend \(\pi-1\) while
+dropping the non-\(\pi\) remainder. The deduplication assessment classifies this
+as a new instance of a known failure mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-018-sinh-incorrectly-evaluates-i-pi-i-pi-1-to-zero}
+\end{counterexamplebox}
+
+\end{document}

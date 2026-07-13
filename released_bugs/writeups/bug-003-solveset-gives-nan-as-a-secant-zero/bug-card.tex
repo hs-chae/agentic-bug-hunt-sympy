@@ -1,0 +1,82 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 3: solveset gives \texttt{nan} as a secant zero}
+
+\begin{counterexamplebox}
+\textbf{Task.} Solve the secant equation over the complex domain:
+\[
+    \sec(x)=0.
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+    \operatorname{solveset}(\sec(x),\,x,\,\mathbb{C})=\{\mathtt{nan}\}.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+    \varnothing.
+\]
+
+\medskip
+\textbf{Explanation.} For finite complex \(z\), \(\sec(z)=1/\cos(z)\) is never
+zero. The reported candidate is not a complex solution;
+\(\sec(\mathtt{nan})=\mathtt{nan}\), not \(0\).
+
+\medskip
+\textbf{Likely root cause.} The diagnosis traces the result to
+\texttt{\_invert\_trig\_hyp\_complex} in
+\nolinkurl{sympy/solvers/solveset.py}, which applies \texttt{asec(0)} while
+inverting \(\sec(x)=0\) and lacks a reciprocal-trig range guard excluding zero.
+This is a new instance of a known failure mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-003-solveset-gives-nan-as-a-secant-zero}
+\end{counterexamplebox}
+
+\end{document}

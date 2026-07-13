@@ -1,0 +1,74 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 46: Matrix.is\_diagonalizable Ignores Eigenvalue Collision}
+
+\begin{counterexamplebox}
+\textbf{Task.} Decide whether the symbolic matrix is diagonalizable.
+\[
+M=\begin{pmatrix}a&1\\0&b\end{pmatrix}.
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+\operatorname{is\_diagonalizable}(M)=\mathrm{True},\qquad
+P=\begin{pmatrix}1&-1/(a-b)\\0&1\end{pmatrix}.
+\]
+
+\medskip
+\textbf{Correct answer.} The answer is conditional: \(M\) is diagonalizable for \(a\ne b\), but it is not diagonalizable when \(a=b\).
+
+\medskip
+\textbf{Explanation.} Substituting \(b=a\) gives \(\begin{pmatrix}a&1\\0&a\end{pmatrix}\), a nontrivial Jordan block. Its only eigenspace is one-dimensional while the eigenvalue \(a\) has algebraic multiplicity \(2\), so an unconditional \(\mathrm{True}\) is wrong.
+
+\medskip
+\textbf{Likely root cause.} In \nolinkurl{sympy/matrices/eigen.py}, \SymPy{} trusts generic \texttt{eigenvects()} output and checks the symbolic eigenvalue keys \(a\) and \(b\) independently, without carrying the side condition \(a\ne b\) introduced by \(1/(a-b)\). This is a new instance of a known failure mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-046-matrix-is-diagonalizable-ignores-eigenvalue-collision}
+\end{counterexamplebox}
+
+\end{document}

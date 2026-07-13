@@ -1,0 +1,76 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 43: Collapsed Range for \texorpdfstring{$\cos(x)/\cot(x)$}{cos(x)/cot(x)}}
+
+\begin{counterexamplebox}
+\textbf{Task.} Compute the real range of the quotient
+\[
+f(x)=\frac{\cos x}{\cot x}.
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+\operatorname{function\_range}(f,x,\mathbb{R})=\{0\}.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+\operatorname{range}(f)=(-1,1).
+\]
+
+\medskip
+\textbf{Explanation.} At the defined point \(x=\pi/3\), the quotient evaluates to \(\sqrt{3}/2\), so the range cannot be \(\{0\}\). The cancellation \(\cos x/\cot x=\sin x\) is valid only on the original quotient's domain; points \(x=k\pi/2\) are excluded, including the points where \(\sin x=\pm 1\).
+
+\medskip
+\textbf{Likely root cause.} The diagnosis identifies a trig rewrite in \nolinkurl{sympy/calculus/singularities.py} that rewrites away the denominator condition \(\cot(x)=0\); then \nolinkurl{sympy/calculus/util.py} treats the period as a closed interval and constructs the range from endpoint and critical-value sampling. This is a new failure mode with no public precedent.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-043-collapsed-range-for-cos-x-cot-x}
+\end{counterexamplebox}
+
+\end{document}

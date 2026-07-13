@@ -1,0 +1,216 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 47: linsolve misses the a = 0 branch}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import S, linsolve, symbols
+
+x, a = symbols("x a")
+sol = linsolve([a*x - a], [x])
+print("solution:", sol)
+print("equation at a=0, x=2:", (a*x - a).subs({a: 0, x: 2}))
+print("reported contains x=2 after a=0:", (S(2),) in sol.subs(a, 0))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+SymPy version: 1.14.0
+solution: {(1,)}
+equation at a=0, x=2: 0
+reported contains x=2 after a=0: False
+\end{lstlisting}
+
+SymPy returns only the singleton solution \(\{(1,)\}\).  However, after
+specializing the parameter to \(a=0\), the original equation is satisfied by
+\(x=2\), while \((2,)\) is not contained in the specialized reported solution.
+The returned set therefore omits valid solutions on the degenerate parameter
+branch.
+
+\subsection{Expected Behavior}
+
+The mathematically correct answer is conditional: \(x=1\) when \(a\ne 0\), and
+all values of \(x\) when \(a=0\).  Equivalently, the solution set should include
+the generic branch
+\[
+  a \ne 0,\qquad x=1,
+\]
+and the degenerate branch
+\[
+  a=0,\qquad x \text{ arbitrary}.
+\]
+
+\subsection{Mathematical Explanation}
+
+The equation supplied to \texttt{linsolve} is
+\[
+  a x - a = 0,
+\]
+or, after factoring,
+\[
+  a(x-1)=0.
+\]
+If \(a\ne 0\), division by \(a\) is valid and the equation reduces to
+\(x-1=0\), so \(x=1\).  If \(a=0\), the equation instead becomes
+\[
+  0\cdot (x-1)=0,
+\]
+which is the identity \(0=0\) and imposes no constraint on \(x\).  Thus values
+such as \(x=2\) are valid solutions on the \(a=0\) branch.
+
+The result \(\{(1,)\}\) is not an equivalent representation of the full
+solution set.  Substituting \(a=0\) into the original equation and \(x=2\) gives
+zero, but substituting \(a=0\) into the reported solution leaves only
+\(\{(1,)\}\), which excludes \((2,)\).  The missing branch is therefore a real
+loss of solutions, not a harmless simplification or alternate set notation.
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis identifies the sparse linear-solver domain and row-reduction
+pipeline as the source-level mechanism.  The public call
+\texttt{linsolve([a*x - a], [x])} is handled in
+\nolinkurl{sympy/solvers/solveset.py}, where \texttt{linsolve} delegates list
+inputs to \texttt{\_linsolve}.  That internal solver is imported from
+\nolinkurl{sympy/polys/matrices/linsolve.py}.  In the traced path,
+\texttt{\_linsolve} converts the equation to coefficient dictionaries, builds a
+sparse augmented matrix, and computes its reduced row echelon form with
+\texttt{sdm\_irref}.
+
+For the representative equation, the linear conversion gives coefficient
+\(\{x: a\}\) and constant \(-a\).  The matrix-domain construction in
+\nolinkurl{sympy/polys/matrices/linsolve.py} uses the elements of this
+augmented row to construct the coefficient domain as the rational-function
+field \(\mathbb{Z}(a)\).  In that field, \(a\) is treated as a nonzero
+invertible coefficient unless it is the zero rational function.  Row reduction
+therefore divides the row \([a,a]\) by \(a\), obtains the normalized row
+\([1,1]\), and returns the generic solution \(x=1\).
+
+\begin{lstlisting}[style=bugpython]
+K, elems_K = construct_domain(elems, field=True, extension=True)
+...
+Arref, pivots, nzcols = sdm_irref(Aaug)
+\end{lstlisting}
+
+This source-level behavior explains the mathematical failure: the solver has
+effectively solved the generic branch where \(a\ne 0\), but the returned
+\texttt{FiniteSet} carries no condition \(a\ne 0\) and does not split off the
+specialization \(a=0\).  The diagnosis presents a plausible fix direction:
+for systems with symbolic coefficients, \texttt{linsolve} should either
+document and return only generic solutions, or carry pivot nonzero conditions
+and split degenerate parameter branches.  In this case, branch-aware handling
+would return \(x=1\) for \(a\ne 0\) and all \(x\) for \(a=0\).
+
+\subsection{Additional Failing Instances}
+
+The independent verification checks the family
+\[
+  a(x-r)=0
+\]
+for integer roots \(r=1,2,3,4,5,6\).  In each case, the generic solution is
+\(x=r\), but the specialization \(a=0\) turns the equation into \(0=0\), so
+every \(x\) is a solution.  The verification chooses \(x=r+1\) as an explicit
+omitted solution on the \(a=0\) branch.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.44\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\operatorname{linsolve}([a(x-1)],[x])\) & Returns \(\{(1,)\}\); after \(a=0\), omits \((2,)\) & \(x=1\) if \(a\ne 0\); all \(x\) if \(a=0\) \\
+\(\operatorname{linsolve}([a(x-2)],[x])\) & Returns \(\{(2,)\}\); after \(a=0\), omits \((3,)\) & \(x=2\) if \(a\ne 0\); all \(x\) if \(a=0\) \\
+\(\operatorname{linsolve}([a(x-3)],[x])\) & Returns \(\{(3,)\}\); after \(a=0\), omits \((4,)\) & \(x=3\) if \(a\ne 0\); all \(x\) if \(a=0\) \\
+\(\operatorname{linsolve}([a(x-4)],[x])\) & Returns \(\{(4,)\}\); after \(a=0\), omits \((5,)\) & \(x=4\) if \(a\ne 0\); all \(x\) if \(a=0\) \\
+\(\operatorname{linsolve}([a(x-5)],[x])\) & Returns \(\{(5,)\}\); after \(a=0\), omits \((6,)\) & \(x=5\) if \(a\ne 0\); all \(x\) if \(a=0\) \\
+\(\operatorname{linsolve}([a(x-6)],[x])\) & Returns \(\{(6,)\}\); after \(a=0\), omits \((7,)\) & \(x=6\) if \(a\ne 0\); all \(x\) if \(a=0\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The same reasoning applies uniformly across the family.  The factor \(a\) is
+the only coefficient carrying the parameter branch, so specializing \(a=0\)
+annihilates the equation regardless of the integer root \(r\).
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check.  This
+specific failure mode is documented in the open issue
+\href{https://github.com/sympy/sympy/issues/16861}{sympy/sympy\#16861},
+``Proper solution of linear equations with symbolic coefficients'' (open, 18
+comments, opened 2019).  That issue raises the same symbolic-coefficient
+missing-\(a=0\)-branch problem using the essentially identical example
+\(a x = b\) (this bug's \(a x - a\) is the \(b=a\) case), observes that the
+solve/solveset/linsolve solutions ``are not valid for a=0'', and proposes a
+conditional \texttt{linsolve} variant that carries the degenerate \(a=0\)
+branch.  Consistent with this, the SymPy documentation shows
+\texttt{linsolve} solving systems with symbolic coefficients by producing
+generic determinant-denominator formulas without splitting singular-parameter
+cases, which is its long-standing documented generic-coefficient convention.
+The deduplication verdict is: family known, specific instance.  The exact
+reproducer \texttt{linsolve([a*x - a], [x])} and the result \(\{(1,)\}\) fall
+squarely within the failure mode \#16861 describes and remain individually
+actionable as a regression test, but this is a known, long-standing limitation
+rather than a previously unreported failure mode.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+from sympy import S, linsolve, symbols
+
+x, a = symbols("x a")
+
+@pytest.mark.parametrize("root", [1, 2, 3, 4, 5, 6])
+def test_linsolve_keeps_zero_parameter_branch(root):
+    expr = a*(x - root)
+    sol = linsolve([expr], [x])
+    extra_solution = S(root + 1)
+    assert (extra_solution,) in sol.subs(a, 0)
+\end{lstlisting}
+
+\end{document}

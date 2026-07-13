@@ -1,0 +1,76 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\date{}
+
+\begin{document}
+
+\author{}
+\maketitle
+
+\section*{Bug 25: \texttt{solveset} returns a false solution for \texttt{acsc(x) = 3*pi/2}}
+
+\begin{counterexamplebox}
+\textbf{Task.} Solve the inverse cosecant equation over the complex domain.
+\[
+\operatorname{acsc}(x)=\frac{3\pi}{2}
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+\operatorname{solveset}\!\left(\operatorname{acsc}(x)=\frac{3\pi}{2},x,\mathbb{C}\right)=\{-1\}.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+\emptyset
+\]
+
+\medskip
+\textbf{Explanation.} Substitution gives \(\operatorname{acsc}(-1)=-\pi/2\), so the returned value has residual \(-2\pi\). The target \(3\pi/2\) is coterminal with \(-\pi/2\) for the periodic cosecant function, but it is outside the principal range of \(\operatorname{acsc}\).
+
+\medskip
+\textbf{Likely root cause.} The diagnosis locates the bad step in \(\texttt{\_invert\_complex}\), where \(\operatorname{acsc}(x)=y\) is inverted mechanically as \(x=\csc(y)\) via \(\texttt{acsc.inverse()}\), without checking that \(y\) is in the principal \(\operatorname{acsc}\) image. This is a new instance of a known failure mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-025-solveset-returns-a-false-solution-for-acsc-x-3-pi-2}
+\end{counterexamplebox}
+
+\end{document}

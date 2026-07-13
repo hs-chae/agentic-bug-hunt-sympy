@@ -1,0 +1,83 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 22: solveset returns 1 for acos(x) = 2*pi}
+
+\begin{counterexamplebox}
+\textbf{Task.} Solve the principal inverse-cosine equation over the complex domain.
+\[
+  \operatorname{solveset}(\operatorname{Eq}(\operatorname{acos}(x), 2\pi), x, \mathbb{C})
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+  \operatorname{solveset}(\operatorname{Eq}(\operatorname{acos}(x), 2\pi), x, \mathbb{C}) = \{1\}.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+  \varnothing
+\]
+
+\medskip
+\textbf{Explanation.} Substituting SymPy's returned value gives
+\(\operatorname{acos}(1) - 2\pi = -2\pi\), so \(1\) is not a solution.  The error comes from
+treating \(\cos\) as a globally valid inverse of the principal branch
+\(\operatorname{acos}\), even though \(\operatorname{acos}(\cos(2\pi)) = 0\), not \(2\pi\).
+
+\medskip
+\textbf{Likely root cause.} The diagnosis points to
+\(\texttt{sympy/solvers/solveset.py:\_invert\_complex}\), where the generic
+inverse-function branch applies \(\texttt{acos(x).inverse() == cos}\) without a
+principal-range condition and later checks only definedness.  This is a new
+instance of a known failure mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-022-solveset-returns-1-for-acos-x-2-pi}
+\end{counterexamplebox}
+
+\end{document}

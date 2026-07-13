@@ -1,0 +1,269 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 63: Fourier Transform Has Wrong Sign at Negative Frequencies}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import *
+
+x, k = symbols("x k", real=True)
+expr = cos(x) / (x**2 + 1)
+F = fourier_transform(expr, x, k)
+
+value = Rational(-1, 3)
+expected = pi * (exp(-Abs(2*pi*value - 1)) + exp(-Abs(2*pi*value + 1))) / 2
+
+print("transform:", F)
+print("SymPy at k=-1/3:", N(F.subs(k, value), 50))
+print("shift-theorem expected:", N(expected, 50))
+print("difference:", N(F.subs(k, value) - expected, 50))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+SymPy at k=-1/3:
+-0.59697240701635906558464748995740185380690547910845
+    + 2.2927016814328156775234560803181663759131427061003e-64*I
+
+shift-theorem expected:
+0.59697240701635906558464748995740185380690547910845
+
+difference:
+-1.1939448140327181311692949799148037076138109582169
+    + 2.2927016814328156775234560803181663759131427061003e-64*I
+\end{lstlisting}
+
+SymPy returns the negative of the expected real value at \(k=-1/3\), up to a
+negligible numerical imaginary roundoff term. This is not merely an alternate
+closed form: the sign of the Fourier transform value is wrong at this negative
+frequency.
+
+\subsection{Expected Behavior}
+
+Under SymPy's Fourier transform convention
+\[
+    \mathcal{F}(f)(k)
+    = \int_{-\infty}^{\infty} f(x)e^{-2\pi i x k}\,dx,
+\]
+the transform should be
+\[
+    \operatorname{fourier\_transform}\!\left(\frac{\cos x}{x^2+1},x,k\right)
+    =
+    \frac{\pi}{2}\left(e^{-|2\pi k-1|}+e^{-|2\pi k+1|}\right)
+\]
+for real \(k\). In particular, at \(k=-1/3\) the value should be the positive
+number
+\[
+    \frac{\pi}{2}\left(e^{-|-2\pi/3-1|}+e^{-|-2\pi/3+1|}\right)
+    \approx 0.59697240701635906558464748995740185380690547910845.
+\]
+
+\subsection{Mathematical Explanation}
+
+The standard transform for the Cauchy kernel under SymPy's convention is
+\[
+    \mathcal{F}\!\left(\frac{1}{x^2+1}\right)(k)
+    = \pi e^{-2\pi |k|}.
+\]
+Since
+\[
+    \cos x = \frac{e^{ix}+e^{-ix}}{2},
+\]
+the modulation/shift theorem gives
+\[
+\begin{aligned}
+    \mathcal{F}\!\left(\frac{\cos x}{x^2+1}\right)(k)
+    &=
+    \frac{1}{2}\mathcal{F}\!\left(\frac{e^{ix}}{x^2+1}\right)(k)
+    + \frac{1}{2}\mathcal{F}\!\left(\frac{e^{-ix}}{x^2+1}\right)(k) \\
+    &=
+    \frac{\pi}{2}\left(e^{-2\pi |k-1/(2\pi)|}
+        + e^{-2\pi |k+1/(2\pi)|}\right) \\
+    &=
+    \frac{\pi}{2}\left(e^{-|2\pi k-1|}+e^{-|2\pi k+1|}\right).
+\end{aligned}
+\]
+This expression is positive and even in \(k\), as also follows directly from
+the fact that \(\cos(x)/(x^2+1)\) is real and even. SymPy's negative value at
+\(k=-1/3\) violates both the shift-theorem formula and the required evenness,
+so it is not a harmless branch representation or simplification choice.
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis narrows the issue to the Meijer definite integration path in
+\nolinkurl{sympy/integrals/meijerint.py}, especially around
+\nolinkurl{sympy/integrals/meijerint.py:1834} and
+\nolinkurl{sympy/integrals/meijerint.py:2048}. The public call path is:
+
+\begin{lstlisting}[style=bugpython]
+fourier_transform(f, x, k)
+    -> FourierTransform(f, x, k).doit()
+    -> FourierTypeTransform._compute_transform
+    -> _fourier_transform(f, x, k, 1, -2*pi, "Fourier")
+\end{lstlisting}
+
+The last step forms the definite integral
+\[
+    \int_{-\infty}^{\infty}
+    \frac{\cos x}{x^2+1}e^{-2\pi i x k}\,dx.
+\]
+That integral is evaluated through \texttt{meijerint\_definite}. The real-line
+integral is split at zero, the two half-line integrals are passed through
+\texttt{\_meijerint\_definite\_2} and \texttt{\_meijerint\_definite\_4}, and the
+result is assembled through the two-Meijer-\(G\) rewrite/integration path.
+
+The diagnosis identifies the following source-level pattern as relevant:
+
+\begin{lstlisting}[style=bugpython]
+# meijerint_definite, -oo to oo case
+res1 = _meijerint_definite_2(f.subs(x, x + c), x)
+res2 = _meijerint_definite_2(f.subs(x, c - x), x)
+res = res1 + res2
+
+# _meijerint_definite_4
+gs = _rewrite2(f, x)
+...
+res += fac*_int0oo(f1, f2, x)
+
+# _int0oo
+eta, _ = _get_coeff_exp(g1.argument, x)
+omega, _ = _get_coeff_exp(g2.argument, x)
+return meijerg(a1, a2, b1, b2, omega/eta)/eta
+\end{lstlisting}
+
+The generated half-line formulas contain branch-sensitive factors involving
+\texttt{polar\_lift(k)**2}, \texttt{Abs(k)}, and an explicit denominator
+\texttt{k}. After the transform simplification in
+\nolinkurl{sympy/integrals/transforms.py} applies \texttt{piecewise\_fold},
+\texttt{powdenest(..., polar=True)}, and \texttt{simplify}, the public transform
+retains an overall \(\operatorname{Abs}(k)/k\) sign factor. This makes the
+result odd under \(k\mapsto -k\) even though the input function is real and even
+and the correct transform is even.
+
+The diagnosis does not isolate a single faulty line inside the Meijer machinery,
+but it reports that the bad sign is already present before
+\texttt{\_fourier\_transform} returns. A plausible fix direction is to preserve
+the real negative-frequency branch information in the Meijer half-line formulas,
+or to return a conditional, \texttt{Piecewise}, or absolute-value expression
+equivalent to the shift-theorem result instead of a formula with an
+\(\operatorname{Abs}(k)/k\) factor.
+
+\subsection{Additional Failing Instances}
+
+The same sign error appears across the parametrized negative-frequency family
+checked independently. Each case evaluates the same transform
+\[
+    \frac{\pi}{2}\left(e^{-|2\pi k-1|}+e^{-|2\pi k+1|}\right)
+\]
+at a negative rational frequency. The expected value is positive in every case
+because it is a sum of positive exponentials; SymPy instead returns the negative
+of that value, again with only negligible numerical imaginary roundoff.
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.42\linewidth}>{\raggedright\arraybackslash}p{0.24\linewidth}>{\raggedright\arraybackslash}p{0.24\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\mathcal{F}\{\cos x/(x^2+1)\}(-1/3)\) & \(-0.596972407016359\) & \(0.596972407016359\) \\
+\(\mathcal{F}\{\cos x/(x^2+1)\}(-1/4)\) & \(-1.00774422210450\) & \(1.00774422210450\) \\
+\(\mathcal{F}\{\cos x/(x^2+1)\}(-1/2)\) & \(-0.209489441961013\) & \(0.209489441961013\) \\
+\(\mathcal{F}\{\cos x/(x^2+1)\}(-2/3)\) & \(-0.0735139945788715\) & \(0.0735139945788715\) \\
+\(\mathcal{F}\{\cos x/(x^2+1)\}(-1)\) & \(-0.00905285962202646\) & \(0.00905285962202646\) \\
+\(\mathcal{F}\{\cos x/(x^2+1)\}(-3/2)\) & \(-0.000391209535759656\) & \(0.000391209535759656\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The initial deduplication check did not surface a public match for this exact
+integrand. A follow-up audit identified an open public issue that the original
+search missed: \href{https://github.com/sympy/sympy/issues/25137}{sympy/sympy\#25137},
+``Integrate returns wrong answer for fourier transform of sinc'' (open; labels
+\texttt{integrals.transforms}, \texttt{integrals.meijerg}). That issue documents
+the same meijerg Fourier-transform \(\operatorname{abs}/k\) sign family: with
+variables declared \texttt{real=True}, the meijerg path returns a wrong result
+carrying a spurious \(\operatorname{Abs}(k)/k\)-type factor (correct when not
+real), and a maintainer comment gives the matching root cause, namely a
+branch-dependent \texttt{sqrt(1/y**2)} collapsing to
+\(\operatorname{sign}(y)=\operatorname{abs}(y)/y\). The earlier ``no public
+precedent'' framing is therefore overstated: this is a known failure family.
+The specific integrand \(\cos x/(x^2+1)\) and its negative-frequency sign error
+are plausibly a new instance of that family, so this concrete reproducible case
+remains individually actionable as a bug report and regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+
+from sympy import Abs, N, Rational, cos, exp, fourier_transform, pi, symbols
+
+x, k = symbols("x k", real=True)
+TRANSFORM = fourier_transform(cos(x) / (x**2 + 1), x, k)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        Rational(-1, 3),
+        Rational(-1, 4),
+        Rational(-1, 2),
+        Rational(-2, 3),
+        Rational(-1, 1),
+        Rational(-3, 2),
+    ],
+)
+def test_fourier_transform_shifted_cauchy_kernel_negative_frequencies(value):
+    expected = pi * (exp(-Abs(2*pi*value - 1)) + exp(-Abs(2*pi*value + 1))) / 2
+    assert abs(complex(N(TRANSFORM.subs(k, value) - expected, 80))) < 1e-40
+\end{lstlisting}
+
+\end{document}

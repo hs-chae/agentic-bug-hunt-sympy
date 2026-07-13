@@ -1,0 +1,87 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 48: Core algebraic identities erase incomplete Piecewise undefined branches}
+
+\begin{counterexamplebox}
+\textbf{Task.} Evaluate core identities built from an incomplete \texttt{Piecewise}
+on its implicit undefined branch.
+\[
+p=\operatorname{Piecewise}((1,x>0)),\qquad x=-1
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+p(-1)=\mathrm{NaN},\qquad (p\cdot0)(-1)=0,\qquad (p-p)(-1)=0,\qquad
+\operatorname{Eq}(p,p)(-1)=\mathrm{True}.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+(p\cdot0)(-1)=\mathrm{NaN},\qquad (p-p)(-1)=\mathrm{NaN},\qquad
+\operatorname{Eq}(p,p)(-1)\ne\mathrm{True}.
+\]
+
+\medskip
+\textbf{Explanation.} The expression \(p\) has no branch for \(x\leq0\), and
+\SymPy{} already evaluates \(p(-1)\) as \(\mathrm{NaN}\).  The finite-value
+identities \(z\cdot0=0\), \(z-z=0\), and \(z=z\) are not valid at a point where
+\(z\) is undefined, so these simplifications incorrectly extend the domain.
+
+\medskip
+\textbf{Likely root cause.} The diagnosis points to generic core simplification:
+\nolinkurl{sympy/core/mul.py} collapses multiplication and cancellation without
+checking for incomplete \texttt{Piecewise} operands, while
+\nolinkurl{sympy/core/relational.py} turns structurally identical operands into
+\texttt{True}.  Deduplication frames this as a new instance of a known failure
+mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-048-core-algebraic-identities-erase-incomplete-piecewise-undefin}
+\end{counterexamplebox}
+
+\end{document}

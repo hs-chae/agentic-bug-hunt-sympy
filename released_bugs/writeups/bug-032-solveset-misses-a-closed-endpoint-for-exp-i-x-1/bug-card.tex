@@ -1,0 +1,83 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 32: solveset misses a closed endpoint for \texorpdfstring{\(\exp(i x)=1\)}{exp(i*x)=1}}
+
+\begin{counterexamplebox}
+\textbf{Task.} Solve the periodic exponential equation over a closed real interval:
+\[
+\operatorname{solveset}\bigl(\exp(i x)=1,\ x,\ [0,2\pi]\bigr).
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+\operatorname{solveset}\bigl(\exp(i x)=1,\ x,\ [0,2\pi]\bigr)=\{0\}.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+\{0,2\pi\}.
+\]
+
+\medskip
+\textbf{Explanation.} The endpoint \(2\pi\) is in the closed interval and
+\(\exp(i\,2\pi)-1=0\), so it exactly satisfies the equation.  The returned set
+\(\{0\}\) is therefore a strict subset of the intersection of the periodic
+solution family \(2\pi\mathbb{Z}\) with \([0,2\pi]\).
+
+\medskip
+\textbf{Likely root cause.} The diagnosis traces the loss to
+\nolinkurl{sympy/solvers/solveset.py}: for a real domain, \texttt{\_invert}
+chooses \texttt{\_invert\_real}, which applies a single-valued logarithm to
+\(\exp(i x)\) and discards the periodic family that complex inversion would
+produce.  This is a new failure mode with no public precedent.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-032-solveset-misses-a-closed-endpoint-for-exp-i-x-1}
+\end{counterexamplebox}
+
+\end{document}

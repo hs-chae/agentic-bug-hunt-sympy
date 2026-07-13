@@ -1,0 +1,196 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 1: solveset returns 0 for asin outside the principal range}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import sympy
+from sympy import Eq, S, asin, pi, simplify, solveset, symbols
+
+x = symbols("x")
+eq = Eq(asin(x), pi)
+sol = solveset(eq, x, domain=S.Complexes)
+
+print("SymPy version:", sympy.__version__)
+print("solveset result:", sol)
+print("residual at returned value 0:",
+      simplify(eq.lhs.subs(x, 0) - eq.rhs.subs(x, 0)))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+SymPy version: 1.14.0
+solveset result: {0}
+residual at returned value 0: -pi
+\end{lstlisting}
+
+SymPy returns the finite solution set \(\{0\}\).  However, direct substitution
+of the returned value into the original equation gives
+\[
+  \operatorname{asin}(0)-\pi = -\pi \ne 0.
+\]
+Thus the returned element does not satisfy the equation that \texttt{solveset}
+was asked to solve.
+
+\subsection{Expected Behavior}
+
+The mathematically correct result is \(\varnothing\), represented in SymPy as
+\texttt{EmptySet}.  There is no complex value \(x\) for which SymPy's principal
+inverse sine satisfies \(\operatorname{asin}(x)=\pi\).
+
+\subsection{Mathematical Explanation}
+
+SymPy's \(\operatorname{asin}\) is the principal inverse sine.  On real inputs its image is
+\([-\pi/2,\pi/2]\), and more generally the complex principal branch has a fixed
+principal image rather than all complex values.  The target \(\pi\) is outside
+that principal image.
+
+Applying \(\sin\) to both sides gives \(x=\sin(\pi)=0\), but this implication
+is not reversible for the principal inverse sine.  The value \(x=0\) satisfies
+\(\sin(\pi)=0\), but it does not satisfy the original equation because
+\(\operatorname{asin}(0)=0\), not \(\pi\).  The wrong answer is therefore not a harmless
+branch choice, a missing constant, or an equivalent representation of a
+solution; it is a concrete non-solution.
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis identifies the relevant code path in
+\nolinkurl{sympy/solvers/solveset.py}, in the complex inversion helper
+\texttt{\_invert\_complex} near line 550.  The traced call path is that
+\texttt{solveset} converts \texttt{Eq(asin(x), pi)} to
+\texttt{asin(x) - pi = 0} and enters \texttt{\_solveset}.  The expression is
+not handled by \texttt{\_solve\_trig}, because the top-level function is the
+inverse trigonometric function \texttt{asin}, not \texttt{sin}.  The solver then
+calls \texttt{\_invert(..., domain=S.Complexes)}, which dispatches to
+\texttt{\_invert\_complex}.
+
+For this equation, \texttt{\_invert\_complex(asin(x) - pi, \{0\}, x)} removes
+the additive constant and then handles \(\operatorname{asin}(x)\) through the generic
+function-inverse path.  It applies \texttt{asin.inverse()}, i.e. \(\sin\), to
+the right-hand side and produces \((x,\{\sin(\pi)\})=(x,\{0\})\).  The
+problematic source rule is the generic use of a function's inverse when one is
+available:
+
+\begin{lstlisting}[style=bugpython]
+return _invert_complex(f.args[0],
+                       imageset(Lambda(n, f.inverse()(n)), g_ys), symbol)
+\end{lstlisting}
+
+For principal \(\operatorname{asin}\), this treats \(\sin\) as a globally valid inverse
+without carrying the required range condition on the right-hand side.  The
+later filtering accepts the finite inversion result after \texttt{domain\_check}
+rather than checking the residual \(\operatorname{asin}(0)-\pi\) against the original
+equation.  Consequently, the candidate \(0\) is accepted even though it is not
+a solution.  A plausible fix direction supported by the diagnosis is to make
+inverse-function handling for principal inverse functions carry image or range
+conditions, returning \(\varnothing\) or a \texttt{ConditionSet} when a concrete
+target such as \(\pi\) violates the principal \(\operatorname{asin}\) image.
+
+\subsection{Additional Failing Instances}
+
+The same failure occurs for integer multiples of \(\pi\) that lie outside the
+principal image of \(\operatorname{asin}\).  The independent verification checks
+\[
+  \operatorname{asin}(x)=n\pi,\qquad n\in\{1,2,-1,3,4,5\},
+\]
+over the complex numbers.  In each case, SymPy's inversion computes
+\(x=\sin(n\pi)=0\), but the returned value has residual
+\(\operatorname{asin}(0)-n\pi=-n\pi\ne0\).  Since none of these targets belongs to the
+principal image of \(\operatorname{asin}\), the expected solution set is \(\varnothing\) in
+all cases.
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.44\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\operatorname{solveset}(\operatorname{asin}(x)=\pi,\ x,\ \mathbb{C})\) & returns \(\{0\}\); residual \(-\pi\) & \(\varnothing\) \\
+\(\operatorname{solveset}(\operatorname{asin}(x)=2\pi,\ x,\ \mathbb{C})\) & returns \(\{0\}\); residual \(-2\pi\) & \(\varnothing\) \\
+\(\operatorname{solveset}(\operatorname{asin}(x)=-\pi,\ x,\ \mathbb{C})\) & returns \(\{0\}\); residual \(\pi\) & \(\varnothing\) \\
+\(\operatorname{solveset}(\operatorname{asin}(x)=3\pi,\ x,\ \mathbb{C})\) & returns \(\{0\}\); residual \(-3\pi\) & \(\varnothing\) \\
+\(\operatorname{solveset}(\operatorname{asin}(x)=4\pi,\ x,\ \mathbb{C})\) & returns \(\{0\}\); residual \(-4\pi\) & \(\varnothing\) \\
+\(\operatorname{solveset}(\operatorname{asin}(x)=5\pi,\ x,\ \mathbb{C})\) & returns \(\{0\}\); residual \(-5\pi\) & \(\varnothing\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check.  The
+closest related public material found was documentation confirming the
+principal-branch behavior of \(\operatorname{asin}\), general principal-branch references,
+and SymPy documentation stating that \texttt{solveset} returns values for which
+the equation is true.  No public issue, pull request, discussion, or external
+report was identified for \(\operatorname{asin}(x)=\pi\), the wrong output \(\{0\}\), or a
+missing principal-range check in \texttt{solveset} for this exact case.  The
+deduplication verdict is therefore a new instance of a known failure mode: the
+general need for branch- and range-aware inverse solving is known, but this
+specific reproducible case appears previously unreported and remains
+individually actionable as an issue and regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+
+from sympy import Eq, FiniteSet, S, asin, pi, simplify, solveset, symbols
+
+
+@pytest.mark.parametrize("n", [1, 2, -1, 3, 4, 5])
+def test_solveset_principal_asin_rejects_out_of_range_targets(n):
+    x = symbols("x")
+    eq = Eq(asin(x), n*pi)
+    sol = solveset(eq, x, domain=S.Complexes)
+
+    assert sol != FiniteSet(0)
+    assert simplify(eq.lhs.subs(x, 0) - eq.rhs.subs(x, 0)) != 0
+\end{lstlisting}
+
+\end{document}

@@ -1,0 +1,76 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 53: singularities Returns EmptySet for zeta(x) at Its Pole}
+
+\begin{counterexamplebox}
+\textbf{Task.} Find the complex singularities of the Riemann zeta function as a function of \(x\).
+\[
+\operatorname{singularities}(\zeta(x), x, \mathbb{C})
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+\operatorname{singularities}(\zeta(x), x, \mathbb{C})=\emptyset .
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+\operatorname{singularities}(\zeta(x), x, \mathbb{C})=\{1\}.
+\]
+
+\medskip
+\textbf{Explanation.} The Riemann zeta function is meromorphic with a simple pole at \(x=1\). SymPy itself confirms the pole through \(\zeta(1)=\mathtt{zoo}\) and \(\lim_{x\to 1}\zeta(x)=\mathtt{zoo}\), so returning \(\emptyset\) omits a genuine singularity.
+
+\medskip
+\textbf{Likely root cause.} The diagnosed implementation of \texttt{singularities} scans negative powers and a short list of elementary functions, but it does not consult special-function pole information such as the known zeta pole at \(s=1\). This is a new failure mode with no public precedent.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-053-singularities-returns-emptyset-for-zeta-x-at-its-pole}
+\end{counterexamplebox}
+
+\end{document}

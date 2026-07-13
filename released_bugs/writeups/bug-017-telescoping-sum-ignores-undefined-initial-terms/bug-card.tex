@@ -1,0 +1,76 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\date{}
+
+\begin{document}
+
+\author{}
+\maketitle
+
+\section*{Bug 17: telescoping sum ignores undefined initial terms}
+
+\begin{counterexamplebox}
+\textbf{Task.} Evaluate the infinite sum
+\[
+\sum_{k=0}^{\infty} \frac{1}{k(k-1)}.
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+\operatorname{Sum}\!\left(\frac{1}{k(k-1)},(k,0,\infty)\right).\operatorname{doit}()=-1.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+\sum_{k=0}^{\infty} \frac{1}{k(k-1)} \text{ is undefined.}
+\]
+
+\medskip
+\textbf{Explanation.} The terms at \(k=0\) and \(k=1\) have denominator zero, so although \(\frac{1}{k(k-1)}=\frac{1}{k-1}-\frac{1}{k}\) telescopes on ranges where the terms are defined, the requested range begins with two undefined terms. The well-defined tail from \(k=2\) sums to \(1\), so the returned value \(-1\) is not a valid value for the tail either.
+
+\medskip
+\textbf{Likely root cause.} The diagnosis points to the telescoping path in \nolinkurl{sympy/concrete/summations.py}: after partial fractions, SymPy applies the endpoint telescoping formula without checking for poles in the original summation range. This is a new instance of a known failure mode. 
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-017-telescoping-sum-ignores-undefined-initial-terms}
+\end{counterexamplebox}
+
+\end{document}

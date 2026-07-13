@@ -1,0 +1,213 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 23: solveset returns 0 for atan(x) = pi outside the principal atan range}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import Eq, S, N, atan, pi, solveset, symbols
+
+x = symbols("x")
+eq = Eq(atan(x), pi)
+sol = solveset(eq, x, domain=S.Complexes)
+
+print("solution =", sol)
+for s in sol:
+    print("residual at", s, "=", N(atan(s) - pi, 80))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+solution = {0}
+residual at 0 = -3.1415926535897932384626433832795028841971693993751058209749445923078164062862090
+\end{lstlisting}
+
+SymPy returns the candidate \(x = 0\).  Substituting that value into the
+original equation gives
+\[
+  \operatorname{atan}(0) - \pi = -\pi,
+\]
+so the returned value does not satisfy the equation.
+
+\subsection{Expected Behavior}
+
+The correct solution set over \(S.\mathrm{Complexes}\) is \(\varnothing\).  The
+principal value of \(\operatorname{atan}(0)\) is \(0\), not \(\pi\), and the
+principal branch of \(\operatorname{atan}\) does not attain the real value
+\(\pi\).
+
+\subsection{Mathematical Explanation}
+
+The equation being solved is
+\[
+  \operatorname{atan}(x) = \pi.
+\]
+Applying \(\tan\) to both sides gives the tempting candidate
+\[
+  x = \tan(\pi) = 0.
+\]
+That inference is invalid for the principal inverse tangent.  The identity
+\(\tan(\operatorname{atan}(x)) = x\) holds where the principal arctangent is
+defined, but \(\operatorname{atan}(\tan(y))\) does not equal \(y\) for arbitrary
+\(y\).  Instead, \(\operatorname{atan}\) returns a principal value with real part
+in the principal arctangent strip.  In particular,
+\[
+  \operatorname{atan}(0) = 0,
+\]
+so \(x = 0\) satisfies \(\operatorname{atan}(x) = 0\), not
+\(\operatorname{atan}(x) = \pi\).  The reported answer is therefore an
+extraneous solution introduced by treating a principal-branch inverse as though
+it were a globally valid inverse.
+
+\subsection{Source-Level Diagnosis}
+
+\begin{sloppypar}
+The diagnosis identifies the relevant solver code in
+\nolinkurl{sympy/solvers/solveset.py}, specifically \texttt{\_solveset} and
+\texttt{\_invert\_complex}.  The traced call path starts from the complex-domain
+call to solve \(\operatorname{atan}(x) = \pi\).  The equation is normalized to
+\texttt{atan(x) - pi}.  This expression is not handled by \texttt{\_solve\_trig},
+so \texttt{\_solveset} reaches the generic inversion call.  The inverter removes
+the additive \(-\pi\), obtains \texttt{atan(x) = pi}, and dispatches to the
+generic inverse-function branch in \texttt{\_invert\_complex}.
+\end{sloppypar}
+
+The key rule in \(\texttt{\_invert\_complex}\), located at
+\nolinkurl{sympy/solvers/solveset.py:550-557}, is:
+
+\begin{lstlisting}[style=bugpython]
+if hasattr(f, 'inverse') and f.inverse() is not None and \
+   not isinstance(f, TrigonometricFunction) and \
+   not isinstance(f, HyperbolicFunction) and \
+   not isinstance(f, exp):
+    ...
+    return _invert_complex(f.args[0],
+                           imageset(Lambda(n, f.inverse()(n)), g_ys), symbol)
+\end{lstlisting}
+
+For \(f = \operatorname{atan}(x)\), the inverse method returns \(\tan\), with the
+inverse defined in \nolinkurl{sympy/functions/elementary/trigonometric.py:2775}.
+The diagnosis notes that inverse trigonometric functions are not excluded by
+this branch.  With target set \(\{\pi\}\), the branch maps the target through
+\(\tan\), producing \(\{\tan(\pi)\} = \{0\}\).  The finite candidate is then
+accepted because the original expression is defined at \(x = 0\); no residual
+equality check rejects it.  Thus the solver returns a solution of
+\(\tan(\operatorname{atan}(x)) = \tan(\pi)\), not a solution of the original
+principal-value equation.
+
+A plausible fix direction supported by the diagnosis is to treat inverse
+trigonometric functions as partial inverses.  The solver could invert them only
+when the target is known to lie in the appropriate principal range, or it could
+post-filter finite candidates against the original equation.
+
+\subsection{Additional Failing Instances}
+
+The same mechanism appears for other real multiples of \(\pi\) outside the
+principal range of \(\operatorname{atan}\).  Applying \(\tan\) to each target
+produces \(0\), but the principal value \(\operatorname{atan}(0)\) is \(0\), not
+the requested nonzero multiple of \(\pi\).  The independent verification records
+the following parametrized cases.
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.44\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\operatorname{atan}(x) = \pi\) & returns a set containing \(0\) & \(\varnothing\) \\
+\(\operatorname{atan}(x) = -\pi\) & returns a set containing \(0\) & \(\varnothing\) \\
+\(\operatorname{atan}(x) = 2\pi\) & returns a set containing \(0\) & \(\varnothing\) \\
+\(\operatorname{atan}(x) = -2\pi\) & returns a set containing \(0\) & \(\varnothing\) \\
+\(\operatorname{atan}(x) = 3\pi\) & returns a set containing \(0\) & \(\varnothing\) \\
+\(\operatorname{atan}(x) = -3\pi\) & returns a set containing \(0\) & \(\varnothing\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The expected behavior is the same across the family because each target is a
+real value outside the real principal range of \(\operatorname{atan}\), while the
+returned candidate is only a solution of the tangent equation obtained after an
+invalid global inversion step.
+
+\subsection{Related Issues Assessment}
+
+The available deduplication evidence found related background on principal
+branches of inverse trigonometric functions and the SymPy \texttt{solveset}
+contract, but no public report of this exact reproducer or output.  The verdict
+is therefore a new instance of a known failure mode: the broad issue of
+respecting principal branches is known, but this exact \(\operatorname{atan}\)
+case with the false result \(\{0\}\) appears previously unreported and remains
+individually actionable as a focused issue and regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+from sympy import Eq, S, atan, pi, solveset, symbols, simplify
+
+x = symbols("x")
+
+CASES = [
+    (pi, 0),
+    (-pi, 0),
+    (2*pi, 0),
+    (-2*pi, 0),
+    (3*pi, 0),
+    (-3*pi, 0),
+]
+
+
+@pytest.mark.parametrize("target,bad", CASES)
+def test_solveset_atan_rejects_values_outside_principal_range(target, bad):
+    sol = solveset(Eq(atan(x), target), x, domain=S.Complexes)
+
+    assert sol == S.EmptySet
+    assert simplify(atan(bad) - target) != 0
+\end{lstlisting}
+
+\end{document}

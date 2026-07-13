@@ -1,0 +1,185 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\date{}
+
+\begin{document}
+
+\author{}
+\maketitle
+
+\section{Bug 31: \texttt{solveset} Returns Real Solutions for an Impossible \texttt{acos(cos(u))} Equation}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import Eq, S, acos, cos, solveset, symbols
+
+u = symbols("u")
+print(solveset(Eq(acos(cos(u)), -1), u, S.Reals))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+Union(ImageSet(Lambda(_n, 2*_n*pi + 1), Integers),
+      ImageSet(Lambda(_n, 2*_n*pi - 1 + 2*pi), Integers))
+
+residual at 1 = 2
+numeric residual at 1 = 2.0000000000000000000000000000000000000000000000000
+residual at -1 = 2
+numeric residual at -1 = 2.0000000000000000000000000000000000000000000000000
+\end{lstlisting}
+
+SymPy returns two infinite real periodic families.  Representative returned
+values such as \(u=1\) and \(u=-1\) do not satisfy the original equation:
+\[
+  \operatorname{acos}(\cos(1)) - (-1) = 2,
+  \qquad
+  \operatorname{acos}(\cos(-1)) - (-1) = 2.
+\]
+Thus the returned set contains false positive real solutions.
+
+\subsection{Expected Behavior}
+
+The correct result is \(\varnothing\), represented in SymPy as
+\texttt{EmptySet}.  Over the real domain, there is no real \(u\) satisfying
+\[
+  \operatorname{acos}(\cos(u)) = -1.
+\]
+
+\subsection{Mathematical Explanation}
+
+For real \(u\), \(\cos(u)\in[-1,1]\).  The principal real arccosine maps
+this interval into
+\[
+  \operatorname{acos}([-1,1]) = [0,\pi].
+\]
+Consequently,
+\[
+  \operatorname{acos}(\cos(u)) \in [0,\pi]
+\]
+for every real \(u\).  The left-hand side is never negative, so it cannot
+equal \(-1\).  The reported periodic families are not an equivalent branch
+representation or a harmless constant-shift form: substituting a representative
+from the returned set into the original equation gives a nonzero residual.
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis identifies the relevant logic in \nolinkurl{sympy/solvers/solveset.py},
+especially the generic inverse-function branch around line 230 and the real
+trigonometric inversion block around line 410.  The traced call path is:
+the public \texttt{solveset} call reaches \texttt{\_solveset(..., \_check=True)};
+\texttt{\_solveset} rewrites the equation as \texttt{acos(cos(u)) + 1}; it
+then calls \texttt{\_invert}; because the domain is real, \texttt{\_invert}
+dispatches to \texttt{\_invert\_real}.
+
+Inside \texttt{\_invert\_real}, the additive constant is stripped, reducing
+the problem to \(\operatorname{acos}(\cos(u))=-1\).  The generic inverse-function branch
+then applies \texttt{acos.inverse()}, namely \(\cos\), to the target \(-1\)
+without first checking whether \(-1\) is in the principal real range of
+\(\operatorname{acos}\).  This changes the problem into \(\cos(u)=\cos(-1)\), equivalently
+\(\cos(u)=\cos(1)\).  The later real trigonometric inversion code then
+correctly solves that transformed cosine equation and returns periodic real
+families.  By that point, however, the invalid outer inverse step has already
+lost the range condition from the original equation.
+
+The diagnosis also notes that the trigonometric range check performed later
+checks the transformed target \(\cos(1)\in[-1,1]\), which is true; it does
+not know that the original target \(-1\) was outside the principal range
+\([0,\pi]\) of \(\operatorname{acos}\).  A plausible fix direction is to avoid handling
+inverse trigonometric functions through this generic inverse branch unless the
+right-hand side is first constrained to the inverse function's principal range;
+for \(\operatorname{acos}\), the real target set should be intersected with \([0,\pi]\)
+before applying \(\cos\).
+
+\subsection{Additional Failing Instances}
+
+The same failure appears for the family
+\[
+  \operatorname{solveset}\bigl(\operatorname{acos}(\cos(u))=-a,\; u,\; \mathbb{R}\bigr)
+  \quad\text{with}\quad a\in\{1,2,3,4,5,6\}.
+\]
+In each case, the right-hand side is negative while
+\(\operatorname{acos}(\cos(u))\in[0,\pi]\) for all real \(u\), so the expected result is
+\(\varnothing\).  SymPy instead returns periodic real families solving the
+transformed cosine equation.
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.39\linewidth}>{\raggedright\arraybackslash}p{0.31\linewidth}>{\raggedright\arraybackslash}p{0.20\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\operatorname{acos}(\cos(u))=-1\) & \(\{2\pi n+1:n\in\mathbb{Z}\}\cup\{2\pi n-1+2\pi:n\in\mathbb{Z}\}\) & \(\varnothing\) \\
+\(\operatorname{acos}(\cos(u))=-2\) & \(\{2\pi n+2:n\in\mathbb{Z}\}\cup\{2\pi n-2+2\pi:n\in\mathbb{Z}\}\) & \(\varnothing\) \\
+\(\operatorname{acos}(\cos(u))=-3\) & \(\{2\pi n+3:n\in\mathbb{Z}\}\cup\{2\pi n-3+2\pi:n\in\mathbb{Z}\}\) & \(\varnothing\) \\
+\(\operatorname{acos}(\cos(u))=-4\) & \(\{2\pi n+4:n\in\mathbb{Z}\}\cup\{2\pi n-4+2\pi:n\in\mathbb{Z}\}\) & \(\varnothing\) \\
+\(\operatorname{acos}(\cos(u))=-5\) & \(\{2\pi n+5:n\in\mathbb{Z}\}\cup\{2\pi n-5+2\pi:n\in\mathbb{Z}\}\) & \(\varnothing\) \\
+\(\operatorname{acos}(\cos(u))=-6\) & \(\{2\pi n+6:n\in\mathbb{Z}\}\cup\{2\pi n-6+2\pi:n\in\mathbb{Z}\}\) & \(\varnothing\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check.  No exact
+public SymPy issue, pull request, Stack Overflow report, mailing-list discussion,
+or release-note entry was identified for
+\texttt{solveset(Eq(acos(cos(u)), -1), u, S.Reals)} or for this periodic
+\texttt{ImageSet} output.  The closest related public material concerns the
+general mathematics of inverse-trigonometric principal ranges.  The verdict is
+therefore a new instance of a known failure mode: the broad inverse-trigonometric
+range issue is familiar, but this exact reproducible \texttt{solveset} case is
+previously unreported in the available evidence and remains individually
+actionable as an issue and regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+from sympy import EmptySet, Eq, S, acos, cos, solveset, symbols
+
+@pytest.mark.parametrize("a", [1, 2, 3, 4, 5, 6])
+def test_solveset_acos_cos_negative_target_is_empty(a):
+    u = symbols("u")
+    assert solveset(Eq(acos(cos(u)), -a), u, S.Reals) == EmptySet
+\end{lstlisting}
+
+\end{document}

@@ -1,0 +1,86 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 11: function\_range gives EmptySet for \texorpdfstring{$\sqrt{x^2}$}{sqrt(x**2)}}
+
+\begin{counterexamplebox}
+\textbf{Task.} Compute the real range of the square root of a square.
+\[
+  \operatorname{function\_range}\!\left(\sqrt{x^2}, x, \mathbb{R}\right)
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+  \operatorname{function\_range}\!\left(\sqrt{x^2}, x, \mathbb{R}\right)=\varnothing
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+  [0,\infty)
+\]
+
+\medskip
+\textbf{Explanation.} For real \(x\), \(\sqrt{x^2}=|x|\), whose range is
+\([0,\infty)\), not \(\varnothing\).
+
+\medskip
+\textbf{Likely root cause.} The diagnosis identifies
+\texttt{function\_range} in \nolinkurl{sympy/calculus/util.py}: it samples
+endpoint limits and solutions of \(f'(x)=0\), but misses nondifferentiable
+interior extrema such as the cusp of \(\sqrt{x^2}\) at \(x=0\). Deduplication
+classifies this as a specific new instance of the known
+\texttt{function\_range} / \texttt{Abs}-cusp failure family already reported in
+\SymPy{} issues
+\href{https://github.com/sympy/sympy/issues/16469}{\#16469},
+\href{https://github.com/sympy/sympy/issues/21956}{\#21956}, and
+\href{https://github.com/sympy/sympy/issues/20101}{\#20101}.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-011-function-range-gives-emptyset-for-sqrt-x-2}
+\end{counterexamplebox}
+
+\end{document}

@@ -1,0 +1,221 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 28: solveset returns -1 for a principal cube-root equation}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import Eq, N, Rational, S, simplify, solveset, symbols
+
+x = symbols("x")
+eq = Eq(x**Rational(1, 3), -1)
+sol = solveset(eq, x, S.Reals)
+
+print("equation:", eq)
+print("solveset:", sol)
+for s in sol:
+    print("candidate:", s)
+    print("lhs at candidate:", eq.lhs.subs(x, s))
+    print("residual:", simplify(eq.lhs.subs(x, s) - eq.rhs))
+    print("numeric residual:", N(eq.lhs.subs(x, s) - eq.rhs, 30))
+print("complex-domain solveset:", solveset(eq, x, S.Complexes))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+equation: Eq(x**(1/3), -1)
+solveset: {-1}
+candidate: -1
+lhs at candidate: (-1)**(1/3)
+residual: 1 + (-1)**(1/3)
+numeric residual: 1.5 + 0.866025403784438646763723170753*I
+complex-domain solveset: EmptySet
+\end{lstlisting}
+
+SymPy returns the finite set \(\{-1\}\) for the real-domain call
+\[
+\operatorname{solveset}(\operatorname{Eq}(x^{1/3},-1),x,\mathbb{R}).
+\]
+However, substituting the returned value into the original SymPy expression
+does not satisfy the equation.  The residual at \(x=-1\) is
+\[
+(-1)^{1/3}+1,
+\]
+which SymPy numerically evaluates as \(1.5+0.8660254037844386\,i\), not zero.
+
+\subsection{Expected Behavior}
+
+The correct result is \texttt{EmptySet}.  SymPy's expression
+\texttt{x**Rational(1, 3)} is a principal complex power, not the real-valued
+cube-root function.  Therefore no real \(x\) satisfies the principal-power
+equation \(x^{1/3}=-1\) in SymPy's semantics.
+
+\subsection{Mathematical Explanation}
+
+For SymPy's principal complex power,
+\[
+z^{1/3}=\exp\!\left(\frac{\operatorname{Log}(z)}{3}\right),
+\]
+where \(\operatorname{Log}\) is the principal logarithm.  Since
+\(\operatorname{Log}(-1)=i\pi\), the principal cube root of \(-1\) is
+\[
+(-1)^{1/3}=\exp(i\pi/3)=\frac{1}{2}+\frac{\sqrt{3}}{2}i.
+\]
+Thus
+\[
+(-1)^{1/3}\ne -1
+\quad\text{and}\quad
+(-1)^{1/3}+1\ne0.
+\]
+
+The returned value is not merely an alternate branch representation of the same
+solution.  It is the value produced by the real cube-root function
+\(\operatorname{real\_root}(-1,3)=-1\), but the input equation was written using
+SymPy's principal \texttt{Pow}.  Solving the principal-power equation therefore
+requires respecting the principal branch, and \(-1\) is an extraneous solution.
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis identifies the responsible behavior in
+\nolinkurl{sympy/solvers/solveset.py}, in the function
+\texttt{\_invert\_real}, around line 284 in the inspected SymPy 1.14.0 source.
+The public call enters \texttt{solveset}; because the requested domain is real,
+the symbol is recast to a real dummy and the equation is passed to
+\texttt{\_solveset} with checking enabled.  \texttt{\_solveset} rewrites the
+equation as \texttt{x**(1/3) + 1} and calls \texttt{\_invert}, which dispatches
+to \texttt{\_invert\_real} for the real-domain inversion of the rational power.
+
+The key rule identified in \texttt{\_invert\_real} is the odd-denominator
+rational-power branch:
+
+\begin{lstlisting}[style=bugpython]
+if den % 2 == 1:
+    root = Lambda(n, real_root(n, expo))
+    res = imageset(root, g_ys)
+    ...
+    return _invert_real(base, res, symbol)
+\end{lstlisting}
+
+For \(x^{1/3}+1=0\), this branch applies \texttt{real\_root} to the target set
+\(\{-1\}\), producing \(\{-1\}\) as the preimage for the base \(x\).  That
+transformation is valid for equations explicitly expressed with real-root
+semantics, but it is not equivalent to inverting SymPy's principal complex
+\texttt{Pow} on negative real inputs.
+
+The diagnosis also explains why the later checking pass does not remove the
+extraneous candidate.  The finite-solution filtering path uses
+\texttt{domain\_check}, which checks whether the expression is finite and
+defined at the candidate, rather than re-evaluating whether the original
+equation is true.  Since \((-1)^{1/3}+1\) is finite, the candidate survives even
+though its residual is nonzero.  A plausible fix direction is to restrict this
+odd-denominator \texttt{real\_root} inversion branch to expressions whose
+semantics are actually real-root semantics, or to add a principal-branch guard
+and equation-truth validation when branch-sensitive inversions have been used.
+
+\subsection{Additional Failing Instances}
+
+The same failure appears for odd denominators beyond \(3\).  The independent
+verification cases consider
+\[
+x^{1/n}=-1
+\]
+over the real domain for \(n\in\{3,5,7,9,11,13\}\).  In each case, SymPy's
+real-domain solver returns \(\{-1\}\), while the expected answer is
+\texttt{EmptySet}.  The reason is uniform: for every listed odd \(n>1\), the
+principal value is
+\[
+(-1)^{1/n}=\exp(i\pi/n),
+\]
+which is not \(-1\).  Hence \(x=-1\) does not satisfy any of the listed
+principal-power equations.
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.44\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\operatorname{solveset}(\operatorname{Eq}(x^{1/3},-1),x,\mathbb{R})\) & returns \(\{-1\}\) & \texttt{EmptySet} \\
+\(\operatorname{solveset}(\operatorname{Eq}(x^{1/5},-1),x,\mathbb{R})\) & returns \(\{-1\}\) & \texttt{EmptySet} \\
+\(\operatorname{solveset}(\operatorname{Eq}(x^{1/7},-1),x,\mathbb{R})\) & returns \(\{-1\}\) & \texttt{EmptySet} \\
+\(\operatorname{solveset}(\operatorname{Eq}(x^{1/9},-1),x,\mathbb{R})\) & returns \(\{-1\}\) & \texttt{EmptySet} \\
+\(\operatorname{solveset}(\operatorname{Eq}(x^{1/11},-1),x,\mathbb{R})\) & returns \(\{-1\}\) & \texttt{EmptySet} \\
+\(\operatorname{solveset}(\operatorname{Eq}(x^{1/13},-1),x,\mathbb{R})\) & returns \(\{-1\}\) & \texttt{EmptySet} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check and
+classified this as a new instance of a known failure mode.  The closest public
+materials identified were SymPy documentation describing the explicit domain
+argument to \texttt{solveset}, principal-branch behavior for elementary
+functions, and the distinction between principal powers and real-root
+interpretations.  The available evidence did not identify a public GitHub
+issue, pull request, Stack Overflow question, mailing-list post, or release-note
+entry for this exact reproducer returning \(\{-1\}\).  Although rational powers
+and principal branches are a known source of solver mistakes, this concrete
+real-domain equation is previously unreported in the available evidence and
+remains individually actionable as an issue and as a regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+
+from sympy import Eq, EmptySet, Rational, S, solveset, symbols
+
+
+@pytest.mark.parametrize("denominator", [3, 5, 7, 9, 11, 13])
+def test_principal_odd_root_equation_has_no_negative_real_solution(denominator):
+    x = symbols("x")
+    assert solveset(Eq(x**Rational(1, denominator), -1), x, S.Reals) == EmptySet
+\end{lstlisting}
+
+\end{document}

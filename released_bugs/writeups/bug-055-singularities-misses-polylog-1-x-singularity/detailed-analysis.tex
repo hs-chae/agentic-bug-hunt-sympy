@@ -1,0 +1,172 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\date{}
+
+\begin{document}
+
+\author{}
+\maketitle
+
+\section{Bug 55: \texorpdfstring{singularities Misses \(\operatorname{polylog}(1,x)\) Singularity}{singularities Misses polylog(1,x) Singularity}}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import S, log, polylog, symbols
+from sympy.calculus.singularities import singularities
+
+x = symbols("x")
+expr = polylog(1, x)
+sing = singularities(expr, x, S.Complexes)
+
+print("expr =", expr)
+print("singularities =", sing)
+print("contains 1 =", sing.contains(1))
+print("value at 1 =", expr.subs(x, 1))
+print("rewritten value at 1 =", (-log(1 - x)).subs(x, 1))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+expr = polylog(1, x)
+singularities = EmptySet
+contains 1 = False
+value at 1 = zoo
+rewritten value at 1 = zoo
+\end{lstlisting}
+
+SymPy reports no singularities for \(\operatorname{polylog}(1,x)\) over the complex domain.  The same run also shows that both the original expression and the logarithmic rewrite evaluate to \(\mathtt{zoo}\) at \(x=1\), so the returned \(\varnothing\) misses a concrete singular point.
+
+\subsection{Expected Behavior}
+
+The singularity set should include \(x=1\).  In set notation,
+\[
+\operatorname{singularities}(\operatorname{polylog}(1,x),x,\mathbb{C})
+\quad\text{should contain}\quad \{1\}.
+\]
+
+\subsection{Mathematical Explanation}
+
+For order \(1\), the polylogarithm has the standard identity
+\[
+\operatorname{Li}_1(z)=\operatorname{polylog}(1,z)=-\log(1-z).
+\]
+Therefore
+\[
+\operatorname{polylog}(1,x)=-\log(1-x),
+\]
+which has a logarithmic singularity when the logarithm argument vanishes:
+\[
+1-x=0 \quad\Longleftrightarrow\quad x=1.
+\]
+This is not a harmless alternative representation or branch-choice artifact.  Returning \(\varnothing\) asserts that there is no singular point in the complex domain, while substitution at \(x=1\) gives \(\mathtt{zoo}\), and the logarithmic identity exposes the missing singularity directly.
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis identifies the relevant public entry point as \texttt{singularities(expr, x, S.Complexes)} in \nolinkurl{sympy/calculus/singularities.py}.  The traced call path stays inside that function: it rewrites a small set of trigonometric and hyperbolic functions, scans the rewritten expression for negative-power \texttt{Pow} atoms, and then scans the original expression for a hard-coded set of logarithmic and inverse-hyperbolic atoms.
+
+The key source-level behavior is that the scan only handles forms such as \texttt{Pow}, \texttt{log}, \texttt{asech}, \texttt{acsch}, \texttt{atanh}, and \texttt{acoth}.  It has no handler for \texttt{polylog} and does not apply \texttt{expand\_func}.  The existing implementation of \texttt{polylog.\_eval\_expand\_func} in \nolinkurl{sympy/functions/special/zeta_functions.py} already knows the order-one rewrite \(\operatorname{polylog}(1,z)=-\log(1-z)\), but \texttt{singularities} never asks for that rewrite.
+
+\begin{lstlisting}[style=bugpython]
+e = expression.rewrite([sec, csc, cot, tan], cos)
+e = e.rewrite([sech, csch, coth, tanh], cosh)
+for i in e.atoms(Pow):
+    ...
+for i in expression.atoms(log, asech, acsch):
+    sings += solveset(i.args[0], symbol, domain)
+for i in expression.atoms(atanh, acoth):
+    ...
+\end{lstlisting}
+
+For \(\operatorname{polylog}(1,x)\), there are no relevant \texttt{Pow} atoms and no visible \texttt{log} atoms.  The hard-coded scans therefore add no candidate singularities and return the initial \texttt{EmptySet}.  If the expression is first expanded to \(-\log(1-x)\), the existing logarithm branch solves \(1-x=0\) and finds \(x=1\), which indicates that the miss is in dispatch or rewriting rather than in solving the logarithm argument.  A plausible fix direction supported by the diagnosis is to add a targeted \(\operatorname{polylog}(1,z)\) case, or to expand supported special functions before scanning for known singular forms.
+
+\subsection{Additional Failing Instances}
+
+The same failure occurs for affine arguments \(a(x)\) where \(a(x)=1\) has a solution.  In each case, \(\operatorname{polylog}(1,a(x))=-\log(1-a(x))\), so any root of \(1-a(x)\) is a logarithmic singularity.  The parametrized evidence covers the following cases.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.44\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\operatorname{polylog}(1,x)\) & Returns \texttt{EmptySet}; does not contain \(1\) & Singularity set contains \(1\) \\
+\(\operatorname{polylog}(1,x+1)\) & Does not contain \(0\) & Singularity set contains \(0\) \\
+\(\operatorname{polylog}(1,x-2)\) & Does not contain \(3\) & Singularity set contains \(3\) \\
+\(\operatorname{polylog}(1,2x)\) & Does not contain \(1/2\) & Singularity set contains \(1/2\) \\
+\(\operatorname{polylog}(1,-x)\) & Does not contain \(-1\) & Singularity set contains \(-1\) \\
+\(\operatorname{polylog}(1,x/3)\) & Does not contain \(3\) & Singularity set contains \(3\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The expected behavior is uniform across the family because the only change is the inner argument of the same logarithmic identity.  When \(a(x)=1\), the equivalent expression \(-\log(1-a(x))\) has logarithm argument zero.
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check.  The closest public material identified was SymPy documentation noting the general limitations of \texttt{singularities}, older public source documentation describing limited supported forms, and external Sage documentation for the \(\operatorname{polylog}(1,x)\) logarithmic rewrite.  No public SymPy issue, pull request, Stack Overflow report, release note, or mailing-list discussion was identified for the exact call \texttt{singularities(polylog(1, x), x, S.Complexes)} returning \texttt{EmptySet}.  The deduplication verdict is therefore a new failure mode with no public precedent, and the concrete reproducer remains individually actionable as a targeted issue and regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+from sympy import S, polylog, symbols
+from sympy.calculus.singularities import singularities
+
+x = symbols("x")
+
+
+@pytest.mark.parametrize(
+    ("arg", "point"),
+    [
+        (x, S.One),
+        (x + 1, S.Zero),
+        (x - 2, S(3)),
+        (2*x, S.Half),
+        (-x, -S.One),
+        (x/3, S(3)),
+    ],
+)
+def test_singularities_polylog_one_includes_log_singularity(arg, point):
+    found = singularities(polylog(1, arg), x, S.Complexes)
+    assert found.contains(point) == S.true
+\end{lstlisting}
+
+\end{document}

@@ -1,0 +1,200 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 27: solveset returns a false acosh solution outside the principal range}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import Eq, I, N, S, acosh, pi, solveset, symbols
+
+x = symbols("x")
+eq = Eq(acosh(x), 2*pi*I)
+sol = solveset(eq, x, domain=S.Complexes)
+print("solution =", sol)
+for s in sol:
+    print("residual at", s, "=", N(acosh(s) - 2*pi*I, 80))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+solution = {1}
+residual at 1 = -6.283185307179586476925286766559005768394338798750211641949889184615632812572418*I
+\end{lstlisting}
+
+SymPy returns the finite solution set \(\{1\}\).  Direct substitution shows that
+this returned point does not satisfy the original equation: the residual is
+\(-2\pi i\), displayed above numerically to 80 digits.
+
+\subsection{Expected Behavior}
+
+The correct result is \(\varnothing\).  The principal value satisfies
+\(\operatorname{acosh}(1)=0\), not \(2\pi i\), and there is no complex number
+\(x\) whose principal inverse hyperbolic cosine is \(2\pi i\).
+
+\subsection{Mathematical Explanation}
+
+The error comes from treating \(\cosh\) as a global inverse of the principal
+function \(\operatorname{acosh}\).  Although
+\[
+  \cosh(2\pi i)=1,
+\]
+this only proves that \(1\) solves the composed equation
+\[
+  \cosh(\operatorname{acosh}(x)) = \cosh(2\pi i).
+\]
+It does not prove that \(1\) solves the original principal-branch equation
+\[
+  \operatorname{acosh}(x)=2\pi i.
+\]
+For the returned candidate,
+\[
+  \operatorname{acosh}(1)-2\pi i = -2\pi i \ne 0.
+\]
+Thus the result is not an alternative branch representation or a harmless
+simplification; it is a false solution introduced by discarding the range
+condition of the principal inverse hyperbolic cosine.
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis identifies the relevant solver logic in
+{\footnotesize\nolinkurl{sympy/solvers/solveset.py}}.  The key function is
+\texttt{\_invert\_complex} around lines 550--557, with the call reaching
+\texttt{\_solveset} around line 1313.  The traced call path rewrites the input
+as \(\operatorname{acosh}(x)-2\pi i=0\), removes the additive
+\(-2\pi i\), and then inverts
+\(\operatorname{acosh}(x)=2\pi i\) through the generic complex inversion path.
+That path asks \(\operatorname{acosh}(x)\) for its inverse.  The inverse
+method for \(\operatorname{acosh}\), located in the file
+{\footnotesize\nolinkurl{sympy/functions/elementary/hyperbolic.py}}, returns
+\(\cosh\).
+
+The problematic rule is the generic mapping of the target set through the
+function returned by \texttt{inverse()}:
+
+\begin{lstlisting}[style=bugpython]
+if hasattr(f, 'inverse') and f.inverse() is not None:
+    return x, imageset(Lambda(n, f.inverse()(n)), g_ys)
+\end{lstlisting}
+
+For this equation, that rule maps the target set \(\{2\pi i\}\) through
+\(\cosh\), producing \(\{\cosh(2\pi i)\}=\{1\}\).  The diagnosis notes that
+this treats \(\cosh\) as though it were a globally valid inverse for
+principal \(\operatorname{acosh}\).  Since \(\operatorname{acosh}\) has a
+principal range, the inversion is only sound when the right-hand side is in
+that range.  Here it is not, so the generic inversion solves the composed
+periodic equation instead of the original equation.
+
+A plausible fix direction supported by the diagnosis is to exclude inverse
+hyperbolic functions from this branch-blind generic inverse rule, or to add
+range conditions for the target values before mapping through the elementary
+inverse.  The diagnosis also notes that a residual check on finite candidates
+would prevent this particular false solution from being returned.
+
+\subsection{Additional Failing Instances}
+
+The independent verification covers the representative target \(2\pi i\) and
+five additional targets of the same form.  In each case SymPy maps the target
+through \(\cosh\), returning \(1\) or \(-1\), but the principal value of
+\(\operatorname{acosh}\) at the returned candidate is \(0\) or \(\pi i\), not
+the requested target.  The expected behavior is therefore the same across the
+family: the listed false candidate must not be reported as a solution.
+
+\begin{center}
+\footnotesize
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.38\linewidth}>{\raggedright\arraybackslash}p{0.25\linewidth}>{\raggedright\arraybackslash}p{0.27\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\operatorname{solveset}(\operatorname{acosh}(x)=2\pi i)\) & returns a set containing \(1\) & \(1\) is not a solution; \(\operatorname{acosh}(1)=0\) \\
+\(\operatorname{solveset}(\operatorname{acosh}(x)=-2\pi i)\) & returns a set containing \(1\) & \(1\) is not a solution; \(\operatorname{acosh}(1)=0\) \\
+\(\operatorname{solveset}(\operatorname{acosh}(x)=3\pi i)\) & returns a set containing \(-1\) & \(-1\) is not a solution; \(\operatorname{acosh}(-1)=\pi i\) \\
+\(\operatorname{solveset}(\operatorname{acosh}(x)=-3\pi i)\) & returns a set containing \(-1\) & \(-1\) is not a solution; \(\operatorname{acosh}(-1)=\pi i\) \\
+\(\operatorname{solveset}(\operatorname{acosh}(x)=4\pi i)\) & returns a set containing \(1\) & \(1\) is not a solution; \(\operatorname{acosh}(1)=0\) \\
+\(\operatorname{solveset}(\operatorname{acosh}(x)=-4\pi i)\) & returns a set containing \(1\) & \(1\) is not a solution; \(\operatorname{acosh}(1)=0\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The best-effort deduplication check found public material on the relevant
+principal-branch mathematics for inverse trigonometric and inverse hyperbolic
+functions, but did not identify a public SymPy issue or fix for the exact
+\(\operatorname{acosh}(x)=2\pi i\) false-solution reproducer.  The verdict is
+therefore a new instance of a known failure mode: the broader range-condition
+issue is recognizable, but this concrete reproducible behavior is previously
+unreported in the available evidence and remains individually actionable as a
+SymPy issue and regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+from sympy import Eq, I, S, acosh, pi, simplify, solveset, symbols
+
+x = symbols("x")
+
+CASES = [
+    (2*pi*I, 1),
+    (-2*pi*I, 1),
+    (3*pi*I, -1),
+    (-3*pi*I, -1),
+    (4*pi*I, 1),
+    (-4*pi*I, 1),
+]
+
+
+@pytest.mark.parametrize("target,bad", CASES)
+def test_solveset_acosh_rejects_values_outside_principal_range(target, bad):
+    sol = solveset(Eq(acosh(x), target), x, domain=S.Complexes)
+
+    assert sol.contains(bad) is not S.true
+    assert simplify(acosh(bad) - target) != 0
+\end{lstlisting}
+
+\end{document}

@@ -1,0 +1,201 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 11: function\_range returns EmptySet for sqrt(x**2) over the reals}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import S, sqrt, symbols
+from sympy.calculus.util import function_range
+
+x = symbols("x")
+r = function_range(sqrt(x**2), x, S.Reals)
+
+print("range:", r)
+print("values:", sqrt((-2)**2), sqrt(0**2), sqrt(3**2))
+print("contains 0:", r.contains(0))
+print("contains 2:", r.contains(2))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+range: EmptySet
+values: 2 0 3
+contains 0: False
+contains 2: False
+\end{lstlisting}
+
+SymPy reports that the range is \texttt{EmptySet}. This is not merely an
+alternative representation of the same set: the output excludes values such as
+\(0\) and \(2\), even though the expression directly attains those values at
+\(x=0\) and \(x=-2\), respectively.
+
+\subsection{Expected Behavior}
+
+The correct result is \(\operatorname{Interval}(0,\infty)\), represented in
+SymPy as \texttt{Interval(0, oo)}. The call
+\[
+  \operatorname{function\_range}\!\left(\sqrt{x^2}, x, \mathbb{R}\right)
+\]
+should return the set of all nonnegative real numbers.
+
+\subsection{Mathematical Explanation}
+
+For real \(x\),
+\[
+  \sqrt{x^2} = |x|.
+\]
+The absolute-value function is continuous on \(\mathbb{R}\), has a global
+minimum \(0\) at \(x=0\), and is unbounded above. Hence
+\[
+  \{\sqrt{x^2}: x \in \mathbb{R}\}
+  =
+  \{|x|: x \in \mathbb{R}\}
+  =
+  [0,\infty).
+\]
+Every nonnegative value \(y\) is attained, for example by taking \(x=y\). The
+reported value \(\varnothing\) is therefore a genuine loss of the whole range,
+not a harmless branch convention, simplification choice, or equivalent set
+representation.
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis locates the failure in
+\nolinkurl{sympy/calculus/util.py}, inside
+\texttt{function\_range}, especially the logic around lines 253--281 and the
+critical-point search at line 260. The traced call path enters
+\texttt{function\_range}, computes
+\texttt{continuous\_domain(sqrt(x**2), x, S.Reals)}, and obtains the full real
+interval. The algorithm then samples the interval endpoint limits and solves
+\(f'(x)=0\) with \texttt{solveset(f.diff(x), x, interval)}.
+
+For \(f(x)=\sqrt{x^2}\), both endpoint limits are \(\infty\). The derivative
+expression is \texttt{sqrt(x**2)/x}, effectively \(|x|/x\) on the reals, which
+is undefined at the cusp \(x=0\). Consequently, the global minimum occurs at a
+point where the derivative is undefined rather than zero. Since
+\texttt{function\_range} samples derivative-zero points but does not also sample
+interior derivative singularities where the original function remains
+continuous, \(x=0\) is not added as a candidate value.
+
+With only the infinite endpoint values available, the final interval
+construction uses \(\inf=\infty\) and \(\sup=\infty\), which collapses to
+\texttt{EmptySet}. The source-level behavior therefore misses the finite minimum
+that determines the lower endpoint of the true range. A plausible fix direction
+identified by the diagnosis is to include derivative singularities lying inside
+the original function's continuous domain as candidate points, while intersecting
+such points with the original continuous domain to avoid spurious candidates.
+
+\subsection{Additional Failing Instances}
+
+The same failure appears for shifted cusp expressions of the form
+\(\sqrt{(x+a)^2}\). Over the reals,
+\[
+  \sqrt{(x+a)^2}=|x+a|,
+\]
+so each case has the same range \([0,\infty)\), with the minimum attained at
+\(x=-a\). The independent verification checks the representative case and five
+shifted variants, comparing SymPy's range against \texttt{Interval(0, oo)} and
+direct sample values computed from the real square-root formula.
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.44\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\operatorname{function\_range}(\sqrt{x^2}, x, \mathbb{R})\) & \texttt{EmptySet} & \(\operatorname{Interval}(0,\infty)\) \\
+\(\operatorname{function\_range}(\sqrt{(x+1)^2}, x, \mathbb{R})\) & \texttt{EmptySet} & \(\operatorname{Interval}(0,\infty)\) \\
+\(\operatorname{function\_range}(\sqrt{(x-1)^2}, x, \mathbb{R})\) & \texttt{EmptySet} & \(\operatorname{Interval}(0,\infty)\) \\
+\(\operatorname{function\_range}(\sqrt{(x+2)^2}, x, \mathbb{R})\) & \texttt{EmptySet} & \(\operatorname{Interval}(0,\infty)\) \\
+\(\operatorname{function\_range}(\sqrt{(x-2)^2}, x, \mathbb{R})\) & \texttt{EmptySet} & \(\operatorname{Interval}(0,\infty)\) \\
+\(\operatorname{function\_range}(\sqrt{(x+3)^2}, x, \mathbb{R})\) & \texttt{EmptySet} & \(\operatorname{Interval}(0,\infty)\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check. The closest
+public material found was documentation for \texttt{function\_range}, the
+real-domain refinement \(\sqrt{x^2}\mapsto |x|\), and the elementary-function
+documentation for \texttt{sqrt} and \texttt{Abs}. No public duplicate was
+identified for the exact \texttt{function\_range(sqrt(x**2), x, S.Reals)}
+returning \texttt{EmptySet} symptom. The underlying failure family is, however,
+publicly known: the root cause is \texttt{function\_range}'s critical-point
+search missing the non-differentiable cusp of \(\sqrt{x^2}=|x|\) at \(x=0\), the
+same \texttt{Abs}-cusp mechanism documented in
+\href{https://github.com/sympy/sympy/issues/16469}{sympy/sympy\#16469}
+(\texttt{function\_range(abs(x), x, S.Reals)} failing; correct only with
+\texttt{Symbol("x", real=True)}),
+\href{https://github.com/sympy/sympy/issues/21956}{\#21956}
+(``Unable to find critical points for \texttt{Abs(f(x))}''), and
+\href{https://github.com/sympy/sympy/issues/20101}{\#20101} (maximum of an
+\texttt{Abs} expression failing). The deduplication verdict is therefore a
+specific new instance of this known family rather than a wholly new failure mode
+with no public precedent. The case remains individually actionable because it is
+a small reproducible failure in \texttt{calculus.util.function\_range} with a
+concise regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+
+from sympy import Interval, S, oo, sqrt, symbols
+from sympy.calculus.util import function_range
+
+
+@pytest.mark.parametrize("a", [0, 1, -1, 2, -2, 3])
+def test_function_range_sqrt_shifted_square_over_reals(a):
+    x = symbols("x")
+
+    assert function_range(sqrt((x + a)**2), x, S.Reals) == Interval(0, oo)
+\end{lstlisting}
+
+\end{document}

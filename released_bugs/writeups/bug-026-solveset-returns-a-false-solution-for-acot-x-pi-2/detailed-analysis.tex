@@ -1,0 +1,160 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 26: solveset returns a false solution for acot(x) = -pi/2}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import Eq, S, acot, pi, simplify, solveset
+from sympy.abc import x
+
+sol = solveset(Eq(acot(x), -pi/2), x, S.Reals)
+print("solution:", sol)
+print("residual at 0:", simplify(acot(0) + pi/2))
+print("acot(0):", acot(0))
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+solution: {0}
+residual at 0: pi
+acot(0): pi/2
+\end{lstlisting}
+
+SymPy returns \(0\) as a real solution of \(\operatorname{acot}(x)=-\pi/2\). Substitution immediately contradicts that result: SymPy evaluates \(\operatorname{acot}(0)\) as \(\pi/2\), so the residual for the equation \(\operatorname{acot}(x)+\pi/2=0\) is \(\pi\), not \(0\).
+
+\subsection{Expected Behavior}
+
+The correct real solution set is \(\varnothing\). In SymPy notation, the expected result is \(\mathrm{EmptySet}\).
+
+\subsection{Mathematical Explanation}
+
+The equation being solved is
+\[
+  \operatorname{acot}(x) = -\frac{\pi}{2}.
+\]
+For SymPy's principal real branch, \(\operatorname{acot}(0)=\pi/2\), and the diagnosis records the relevant branch range as \((-\pi/2,\pi/2]\). The left endpoint \(-\pi/2\) is not included in that range. Therefore no real \(x\) has principal inverse cotangent exactly equal to \(-\pi/2\).
+
+The returned value \(x=0\) is not an alternative branch representation or a harmless simplification. It gives
+\[
+  \operatorname{acot}(0) - \left(-\frac{\pi}{2}\right)
+  = \frac{\pi}{2}+\frac{\pi}{2}
+  = \pi,
+\]
+so it does not satisfy the original equation.
+
+\subsection{Source-Level Diagnosis}
+
+The source-level diagnosis locates the problem in two files:
+\begin{center}
+\nolinkurl{sympy/solvers/solveset.py}\\
+\nolinkurl{sympy/functions/elementary/trigonometric.py}
+\end{center}
+The relevant code is the generic inverse-function branch of \texttt{\_invert\_real} around lines 230--238, together with \texttt{acot.inverse()} around lines 2992--2996.
+
+The traced call path is that \texttt{solveset} rewrites the equation as \texttt{acot(x) + pi/2 = 0}, calls \texttt{\_solveset}, and then reaches \texttt{\_invert(acot(x) + pi/2, 0, x, S.Reals)}. The real inversion path subtracts \(\pi/2\), reducing the target equation to \(\operatorname{acot}(x)=-\pi/2\), and then handles \(\operatorname{acot}(x)\) through the generic inverse-function branch.
+
+The diagnosis identifies the following relevant rule:
+
+\begin{lstlisting}[style=bugpython]
+if hasattr(f, 'inverse') and f.inverse() is not None and not isinstance(f, (
+        TrigonometricFunction,
+        HyperbolicFunction,
+        )):
+    ...
+    return _invert_real(f.args[0],
+                        imageset(Lambda(n, f.inverse()(n)), g_ys),
+                        symbol)
+\end{lstlisting}
+
+For \(\operatorname{acot}(x)=-\pi/2\), this branch applies \texttt{acot.inverse()}, namely \(\cot\), to the target value and obtains \(\cot(-\pi/2)=0\). The missing step is a range check for the principal real branch of \(\operatorname{acot}\). Since \(-\pi/2\) is outside the documented principal range \((-\pi/2,\pi/2]\), applying \(\cot\) here is not a valid two-sided inverse step. A plausible fix direction, supported by the diagnosis, is to make this inversion branch range-aware for inverse trigonometric functions, either by intersecting the target set with the principal range before inversion or by special-casing inverse trigonometric functions with branch-aware checks.
+
+\subsection{Additional Failing Instances}
+
+The independent verification checks the same endpoint error after translating the input by a real shift \(a\):
+\[
+  \operatorname{acot}(x-a)=-\frac{\pi}{2}.
+\]
+In each case, SymPy returns a set containing the witness \(x=a\). That witness makes the inner argument \(x-a\) equal to \(0\), so SymPy's own evaluation gives \(\operatorname{acot}(0)=\pi/2\) and the same residual \(\pi\). Thus the expected real solution set is empty across the family.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.44\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}>{\raggedright\arraybackslash}p{0.23\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\(\operatorname{solveset}(\operatorname{acot}(x)=-\pi/2, x, \mathbb{R})\) & returns \(\{0\}\); residual at \(0\) is \(\pi\) & \(\varnothing\) \\
+\(\operatorname{solveset}(\operatorname{acot}(x-1)=-\pi/2, x, \mathbb{R})\) & contains \(1\); residual at \(1\) is \(\pi\) & \(\varnothing\) \\
+\(\operatorname{solveset}(\operatorname{acot}(x+1)=-\pi/2, x, \mathbb{R})\) & contains \(-1\); residual at \(-1\) is \(\pi\) & \(\varnothing\) \\
+\(\operatorname{solveset}(\operatorname{acot}(x-2)=-\pi/2, x, \mathbb{R})\) & contains \(2\); residual at \(2\) is \(\pi\) & \(\varnothing\) \\
+\(\operatorname{solveset}(\operatorname{acot}(x+3)=-\pi/2, x, \mathbb{R})\) & contains \(-3\); residual at \(-3\) is \(\pi\) & \(\varnothing\) \\
+\(\operatorname{solveset}(\operatorname{acot}(x-\pi)=-\pi/2, x, \mathbb{R})\) & contains \(\pi\); residual at \(\pi\) is \(\pi\) & \(\varnothing\) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The bug-finding harness performed a best-effort deduplication check. The closest public match identified was SymPy issue \#17334, a broad discussion of trigonometric solving and inversion limitations in \texttt{solveset}; however, the available evidence did not find a public report for \(\operatorname{acot}(x)=-\pi/2\), for \texttt{solveset} returning \(\{0\}\), or for this exact \(\operatorname{acot}(0)\) residual failure. The deduplication verdict is therefore that this is a new instance of a known failure mode: inverse-trigonometric branch and range mistakes are a known family, while this exact reproducible endpoint case is previously unreported and remains individually actionable as an issue and regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+
+from sympy import Eq, S, acot, pi, simplify, solveset
+from sympy.abc import x
+
+
+@pytest.mark.parametrize("shift", [0, 1, -1, 2, -3, pi])
+def test_acot_endpoint_is_not_inverted_to_false_solution(shift):
+    sol = solveset(Eq(acot(x - shift), -pi/2), x, S.Reals)
+    assert sol.contains(shift) is not S.true
+    assert simplify(acot(shift - shift) + pi/2) != 0
+\end{lstlisting}
+
+\end{document}

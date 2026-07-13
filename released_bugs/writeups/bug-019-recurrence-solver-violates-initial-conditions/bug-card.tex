@@ -1,0 +1,84 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 19: recurrence solver violates initial conditions}
+
+\begin{counterexamplebox}
+\textbf{Task.} Solve the recurrence with the supplied initial conditions.
+\[
+ y(n+2)-(n+2)y(n+1)+y(n)=0,\qquad y(0)=y(1)=1 .
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+SymPy's \texttt{rsolve} returns the zero sequence as the solution.
+% \[
+% \operatorname{rsolve}\bigl(y(n+2)-(n+2)y(n+1)+y(n),\,y(n),\,\{y(0):1,y(1):1\}\bigr)=0 .
+% \]
+
+\medskip
+\textbf{Correct answer.} A valid answer must satisfy \(y(0)=1\) and
+\(y(1)=1\), or the solver should report that it cannot produce such a solution;
+the zero sequence is not a correct answer.
+
+\medskip
+\textbf{Explanation.} Substituting into SymPy's returned expression gives
+\(0|_{n=0}=0\) and \(0|_{n=1}=0\), contradicting both supplied initial
+conditions.  Forward recurrence from the requested values starts
+\(1,1,1,2,7,33,\ldots\), so this is not an equivalent representation of the
+requested initial-value solution.
+
+\medskip
+\textbf{Likely root cause.} The diagnosis locates the issue in
+\nolinkurl{sympy/solvers/recurr.py}:\texttt{rsolve}: initial conditions are
+applied only when the internal solution contains arbitrary constants.  Here
+\texttt{rsolve\_hyper} returns the constant-free candidate \(0\) with no
+symbols, so validation is skipped.  This is a new instance of a known failure mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-019-recurrence-solver-violates-initial-conditions}
+\end{counterexamplebox}
+
+\end{document}

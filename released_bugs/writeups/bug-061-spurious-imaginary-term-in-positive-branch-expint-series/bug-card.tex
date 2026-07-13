@@ -1,0 +1,86 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 61: Spurious Imaginary Term in Positive-Branch \texorpdfstring{\texttt{expint}}{expint} Series}
+
+\begin{counterexamplebox}
+\textbf{Task.} Expand the positive-real exponential integral at the origin.
+\[
+\operatorname{series}(\operatorname{expint}(2,x),x,0,2),
+\qquad x>0 .
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+1+x(\log x-1+\gamma-i\pi)+O(x^2).
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+1+x(\log x-1+\gamma)+O(x^2).
+\]
+
+\medskip
+\textbf{Explanation.} For \(x>0\),
+\(E_2(x)=e^{-x}-xE_1(x)\) and
+\(E_1(x)=-\gamma-\log x+x+O(x^2)\), so the first-order expansion is real.  The
+returned \(-i\pi x\) term makes the truncated series complex at positive real
+inputs, for example at \(x=10^{-3}\).
+
+\medskip
+\textbf{Likely root cause.} The diagnosis traces the call through
+\texttt{expint.\_eval\_nseries}, which rewrites to
+\(\operatorname{Ei}(x\,\operatorname{exp\_polar}(i\pi))\); then
+\texttt{Ei.\_eval\_rewrite\_as\_Si} treats that polar argument as an ordinary
+negative argument and subtracts \(i\pi\).  This is a new instance of a known
+failure mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-061-spurious-imaginary-term-in-positive-branch-expint-series}
+\end{counterexamplebox}
+
+\end{document}

@@ -1,0 +1,87 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 8: \(k\)-weighted binomial sum drops the \texorpdfstring{\(n=1\)}{n=1} exception}
+
+\begin{counterexamplebox}
+\textbf{Task.} Evaluate the \(k\)-weighted alternating binomial sum for a
+nonnegative integer \(n\).
+\[
+\sum_{k=0}^{n} (-1)^k k\binom{n}{k}
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+\operatorname{summation}\!\left((-1)^k k\binom{n}{k},(k,0,n)\right)=0
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+\begin{cases}
+-1, & n=1,\\
+0, & n\in\mathbb{Z}_{\ge 0},\ n\ne 1.
+\end{cases}
+\]
+
+\medskip
+\textbf{Explanation.} At \(n=1\), the finite sum is
+\(0\binom{1}{0}-1\binom{1}{1}=-1\), but SymPy's result is the constant function \(0\) for all \(n\).  
+
+\medskip
+\textbf{Likely root cause.} The diagnosis traces the result to the Gosper
+finite-sum branch in \nolinkurl{sympy/concrete/gosper.py}: the certificate
+\(-(k-1)/(n-1)\) has a pole at \(n=1\), but the endpoint formula simplifies to
+\(0\) before that excluded parameter is preserved.  This is the same
+\texttt{gosper\_sum} lost-endpoint failure family reported in the open issue
+\href{https://github.com/sympy/sympy/issues/29731}{sympy/sympy\#29731}
+(created 2026-05-02), which predates this bundle.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-008-k-weighted-binomial-sum-drops-the-n-1-exception}
+\end{counterexamplebox}
+
+\end{document}

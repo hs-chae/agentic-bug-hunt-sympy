@@ -1,0 +1,206 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\lstdefinestyle{bugpython}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{gray!70!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!30},
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\title{SymPy Bug Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bug 49: Matrix.solve Methods Return Malformed Results on Singular Systems}
+
+\subsection{Minimal Reproducer}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+from sympy import Matrix
+
+A = Matrix([[1, 1], [2, 2]])
+b = Matrix([1, 2])
+
+print("rank(A):", A.rank())
+print("rank([A|b]):", A.row_join(b).rank())
+print("gauss_jordan_solve:", A.gauss_jordan_solve(b))
+
+for method in ["QR", "LDL", "CRAMER"]:
+    try:
+        sol = A.solve(b, method=method)
+        print(method, sol, sol.shape)
+    except Exception as exc:
+        print(method, type(exc).__name__, exc)
+\end{lstlisting}
+
+\subsection{Observed Behavior}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+SymPy version: 1.14.0
+rank(A): 1
+rank([A|b]): 1
+gauss_jordan_solve: (Matrix([
+[1 - tau0],
+[    tau0]]), Matrix([[tau0]]))
+QR Matrix([[1]]) (1, 1)
+LDL Matrix([[nan], [nan]]) (2, 1)
+CRAMER Matrix([[nan], [nan]]) (2, 1)
+\end{lstlisting}
+
+The coefficient matrix has two columns, so a solver result for a unique solution would need two entries. The \texttt{QR} path instead returns a one-entry matrix, while the \texttt{LDL} and \texttt{CRAMER} paths return matrices whose entries are \texttt{nan}. These are malformed or invalid solver outputs for the system.
+
+\subsection{Expected Behavior}
+
+For this non-unique singular system, \texttt{Matrix.solve} with the explicit methods \texttt{QR}, \texttt{LDL}, and \texttt{CRAMER} should reject the solve, matching the guarded default path, or otherwise return a documented representation of the full solution set. The proposed regression behavior is to raise \texttt{NonInvertible}\allowbreak\texttt{MatrixError}. The method-specific paths must not return a vector of the wrong dimension and must not return \texttt{nan} entries as if they were a solution.
+
+\subsection{Mathematical Explanation}
+
+The reproduced system is
+\[
+\begin{bmatrix}
+1 & 1\\
+2 & 2
+\end{bmatrix}
+\begin{bmatrix}
+x\\
+y
+\end{bmatrix}
+=
+\begin{bmatrix}
+1\\
+2
+\end{bmatrix},
+\]
+or equivalently
+\[
+x+y=1,\qquad 2x+2y=2.
+\]
+The second equation is exactly twice the first. Therefore
+\[
+\operatorname{rank}(A)=\operatorname{rank}([A\mid b])=1<2,
+\]
+so the system is consistent but has infinitely many solutions:
+\[
+(x,y)=(1-t,t),\qquad t\in\mathbb{C}.
+\]
+The \texttt{QR} result \(\begin{bmatrix}1\end{bmatrix}\) is not merely a different representation of this solution set; it has only one entry for a two-unknown system. The \texttt{LDL} and \texttt{CRAMER} results \(\begin{bmatrix}\mathrm{nan}\\ \mathrm{nan}\end{bmatrix}\) also do not satisfy \(Ax=b\), since substituting them gives \(\mathrm{nan}\) residuals rather than the zero vector.
+
+\subsection{Source-Level Diagnosis}
+
+The diagnosis identifies the matrix linear-solver dispatch path. The relevant public entry point and dispatcher are:
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\texttt{MatrixBase.solve} & \nolinkurl{sympy/matrices/matrixbase.py}\\
+\texttt{\_solve} & \nolinkurl{sympy/matrices/solvers.py}
+\end{tabular}
+\end{center}
+
+The default \texttt{GJ}/\texttt{GE} branch uses the Gauss-Jordan solver and checks whether the returned solution contains parameters, which catches this non-unique singular case. In contrast, the method-specific branches for \texttt{QR}, \texttt{LDL}, and \texttt{CRAMER} dispatch directly to \texttt{QRsolve}, \texttt{LDLsolve}, and \texttt{cramer\_solve} without the same singularity or rank guard.
+
+The relevant rule is the direct method dispatch after the guarded \texttt{GJ}/\texttt{GE} branch:
+
+\begin{lstlisting}[style=bugpython]
+elif method == 'QR':
+    return M.QRsolve(rhs)
+elif method == 'LDL':
+    return M.LDLsolve(rhs)
+elif method == 'CRAMER':
+    return M.cramer_solve(rhs)
+\end{lstlisting}
+
+This explains the different failure modes. The \texttt{QR} implementation back-substitutes through a reduced triangular factor and returns a one-row result for a two-column matrix. The \texttt{LDL} path divides through a zero diagonal entry in \texttt{D.diagonal\_solve}. The \texttt{CRAMER} path divides by \(\det(A)\), which is zero for this singular matrix. A plausible fix direction supported by the diagnosis is to add a singularity/rank guard, or residual and shape validation, before accepting method-specific solver outputs for singular systems.
+
+\subsection{Additional Failing Instances}
+
+The independent verification covers the family
+\[
+A(a)=\begin{bmatrix}1&1\\ a&a\end{bmatrix},\qquad
+b(a,c)=\begin{bmatrix}c\\ ac\end{bmatrix}.
+\]
+For every listed case, the two equations reduce to the single constraint \(x+y=c\). Thus \((c,0)\) and \((c-7,7)\) are both exact solutions, proving that the system is consistent and non-unique. The same solver contract issue appears across the parametrized examples.
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.36\linewidth}>{\raggedright\arraybackslash}p{0.32\linewidth}>{\raggedright\arraybackslash}p{0.22\linewidth}@{}}
+\toprule
+\textbf{Input / Expression} & \textbf{SymPy behavior} & \textbf{Expected behavior} \\
+\midrule
+\((a,c)=(2,1)\), \(A=\begin{bmatrix}1&1\\2&2\end{bmatrix}\), \(b=\begin{bmatrix}1\\2\end{bmatrix}\) & \texttt{QR}: \(\begin{bmatrix}1\end{bmatrix}\) with shape \(1\times1\); \texttt{LDL}/\texttt{CRAMER}: \(\begin{bmatrix}\mathrm{nan}\\\mathrm{nan}\end{bmatrix}\) & Reject as non-unique, or return the solution set \(x+y=1\). \\
+\((a,c)=(3,1)\), \(A=\begin{bmatrix}1&1\\3&3\end{bmatrix}\), \(b=\begin{bmatrix}1\\3\end{bmatrix}\) & \texttt{QR}: \(\begin{bmatrix}1\end{bmatrix}\) with shape \(1\times1\); \texttt{LDL}/\texttt{CRAMER}: \(\begin{bmatrix}\mathrm{nan}\\\mathrm{nan}\end{bmatrix}\) & Reject as non-unique, or return the solution set \(x+y=1\). \\
+\((a,c)=(2,5)\), \(A=\begin{bmatrix}1&1\\2&2\end{bmatrix}\), \(b=\begin{bmatrix}5\\10\end{bmatrix}\) & \texttt{QR}: \(\begin{bmatrix}5\end{bmatrix}\) with shape \(1\times1\); \texttt{LDL}/\texttt{CRAMER}: \(\begin{bmatrix}\mathrm{nan}\\\mathrm{nan}\end{bmatrix}\) & Reject as non-unique, or return the solution set \(x+y=5\). \\
+\((a,c)=(-1,4)\), \(A=\begin{bmatrix}1&1\\-1&-1\end{bmatrix}\), \(b=\begin{bmatrix}4\\-4\end{bmatrix}\) & \texttt{QR}: \(\begin{bmatrix}4\end{bmatrix}\) with shape \(1\times1\); \texttt{LDL}/\texttt{CRAMER}: \(\begin{bmatrix}\mathrm{nan}\\\mathrm{nan}\end{bmatrix}\) & Reject as non-unique, or return the solution set \(x+y=4\). \\
+\((a,c)=(4,-2)\), \(A=\begin{bmatrix}1&1\\4&4\end{bmatrix}\), \(b=\begin{bmatrix}-2\\-8\end{bmatrix}\) & \texttt{QR}: \(\begin{bmatrix}-2\end{bmatrix}\) with shape \(1\times1\); \texttt{LDL}/\texttt{CRAMER}: \(\begin{bmatrix}\mathrm{nan}\\\mathrm{nan}\end{bmatrix}\) & Reject as non-unique, or return the solution set \(x+y=-2\). \\
+\((a,c)=(5,3)\), \(A=\begin{bmatrix}1&1\\5&5\end{bmatrix}\), \(b=\begin{bmatrix}3\\15\end{bmatrix}\) & \texttt{QR}: \(\begin{bmatrix}3\end{bmatrix}\) with shape \(1\times1\); \texttt{LDL}/\texttt{CRAMER}: \(\begin{bmatrix}\mathrm{nan}\\\mathrm{nan}\end{bmatrix}\) & Reject as non-unique, or return the solution set \(x+y=3\). \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Related Issues Assessment}
+
+The best-effort deduplication check found SymPy issue \#12242 as related public material concerning singular systems, but did not identify it as a covering duplicate of this exact method-specific \texttt{Matrix.solve} failure. The deduplication verdict is therefore a new failure mode with no public precedent. The case remains individually actionable because it gives a small reproducible input, identifies three explicit method branches with invalid outputs, and comes with a focused regression test.
+
+\subsection{Proposed SymPy Regression Test}
+
+\medskip
+
+\begin{lstlisting}[style=bugpython]
+import pytest
+
+from sympy import Matrix
+from sympy.matrices.exceptions import NonInvertibleMatrixError
+
+
+CASES = [
+    (2, 1),
+    (3, 1),
+    (2, 5),
+    (-1, 4),
+    (4, -2),
+    (5, 3),
+]
+
+
+@pytest.mark.parametrize("a,c", CASES)
+@pytest.mark.parametrize("method", ["QR", "LDL", "CRAMER"])
+def test_matrix_solve_method_rejects_nonunique_singular_system(a, c, method):
+    A = Matrix([[1, 1], [a, a]])
+    b = Matrix([c, a*c])
+
+    assert A.rank() == A.row_join(b).rank() == 1
+    with pytest.raises(NonInvertibleMatrixError):
+        A.solve(b, method=method)
+\end{lstlisting}
+
+\end{document}

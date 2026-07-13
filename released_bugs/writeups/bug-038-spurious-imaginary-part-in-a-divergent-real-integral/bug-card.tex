@@ -1,0 +1,88 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+\setlength{\emergencystretch}{2em}
+
+\maketitle
+
+\section*{Bug 38: Spurious Imaginary Part in a Divergent Real Integral}
+
+\begin{counterexamplebox}
+\textbf{Task.} Compute the negative-side improper integral of \(1/|x|\).
+\[
+  \int_{-1}^{0} \frac{1}{|x|}\,dx
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+  \operatorname{integrate}\!\left(\frac{1}{\operatorname{Abs}(x)},(x,-1,0)\right)
+  = \infty + i\pi.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+  \int_{-1}^{0} \frac{1}{|x|}\,dx = \infty.
+\]
+
+\medskip
+\textbf{Explanation.} On \([-1,0)\), \(1/|x|=-1/x\), so
+\(\int_{-1}^{-\varepsilon}1/|x|\,dx=-\log(\varepsilon)\to\infty\) as
+\(\varepsilon\to0^+\).  The integrand is real and nonnegative, so the finite
+\(i\pi\) term is a spurious complex-log branch contribution.
+
+\medskip
+\textbf{Likely root cause.} The diagnosis identifies
+\texttt{\_eval\_interval} endpoint evaluation for a \texttt{Piecewise}
+antiderivative: the negative branch is represented as \(-\log(x)\), and
+substitution at \(x=-1\) keeps the principal-log value \(-i\pi\) instead of a
+real branch value such as \(-\log(-x)\).  This is a specific new instance of
+the already-reported defect in open issue
+\href{https://github.com/sympy/sympy/issues/23337}{\SymPy{}~\#23337}
+(``Spurious I*pi in improper definite integral'').
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-038-spurious-imaginary-part-in-a-divergent-real-integral}
+\end{counterexamplebox}
+
+\end{document}

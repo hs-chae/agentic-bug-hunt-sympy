@@ -1,0 +1,90 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\date{}
+
+\begin{document}
+
+\author{}
+\maketitle
+
+\section*{Bug 50: Wrong negative-branch antiderivative for \texorpdfstring{$\operatorname{asec}(x)$}{asec(x)}}
+
+\begin{counterexamplebox}
+\textbf{Task.} Integrate inverse secant and check the returned primitive on the negative real branch.
+\[
+F(x)=\operatorname{integrate}(\operatorname{asec}(x),x),\qquad x=-2.
+\]
+
+\medskip
+\textbf{SymPy's answer.} \SymPy{} returns a primitive whose derivative has
+\[
+F'(-2)-\operatorname{asec}(-2)=-\frac{2\sqrt{3}}{3}.
+\]
+
+\medskip
+\textbf{Correct answer.} The derivative residual should be \(0\).  On \(x<-1\), one valid real branch is
+\[
+F(x)=x\operatorname{asec}(x)-\operatorname{acosh}(|x|)+C.
+\]
+
+\medskip
+\textbf{Explanation.} Integration by parts leaves the subintegrand
+\(1/(x\sqrt{1-1/x^2})=-1/\sqrt{x^2-1}\) on \(x<-1\), whose primitive is
+\(\operatorname{acosh}(|x|)\).  SymPy uses the opposite real sign there, so the
+final antiderivative differentiates to
+\(\operatorname{asec}(x)-2/\sqrt{x^2-1}\), giving the exact residual above at
+\(x=-2\).
+
+\medskip
+\textbf{Likely root cause.} The diagnosis traces the sign error to the
+Meijer-G/\texttt{hyperexpand} path in \texttt{HyperRep\_asin1}: after rewriting
+with \(z=x^2\), the expansion introduces
+\(x\operatorname{acosh}(|x|)/|x|\) instead of preserving the negative-branch
+primitive \(\operatorname{acosh}(|x|)\).  The \(\operatorname{asec}\)
+antiderivative itself was added by PR~\#19993 (closing issues \#14329 and
+\#19983), and the same wrong-real-branch Meijer/\(\operatorname{acosh}\)
+mechanism is reported in issue \#10453; the specific failure here---a
+\emph{nonzero} derivative residual on the smooth branch \(x<-1\)---is the
+unreported instance of that known family.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-050-wrong-negative-branch-antiderivative-for-asec-x}
+\end{counterexamplebox}
+
+\end{document}

@@ -1,0 +1,73 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\date{}
+
+\begin{document}
+
+\author{}
+\maketitle
+
+\section*{Bug 54: singularities misses the pole of gamma(x) at zero}
+
+\begin{counterexamplebox}
+\textbf{Task.} Find the complex singularities of the gamma function.
+\[
+\operatorname{singularities}(\Gamma(x), x, \mathbb{C})
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+\operatorname{singularities}(\Gamma(x), x, \mathbb{C})=\emptyset
+\]
+
+\medskip
+\textbf{Correct answer.} The result must contain \(0\); in fact, \(\Gamma(x)\) has finite poles at \(0,-1,-2,\ldots\).
+
+\medskip
+\textbf{Explanation.} SymPy itself evaluates \(\Gamma(0)\) as complex infinity, computes residue \(1\) at \(0\), and gives the Laurent expansion \(\Gamma(x)=1/x-\gamma_{\mathrm{E}}+O(x)\). The nonzero \(1/x\) term proves a genuine pole, so \(\emptyset\) is mathematically false.
+
+\medskip
+\textbf{Likely root cause.} The scanner in \nolinkurl{sympy/calculus/singularities.py} handles powers and a small list of logarithmic or inverse-hyperbolic atoms, but it has no path for finite poles of \(\Gamma(g(x))\) and does not use gamma's numeric pole knowledge. This is a new failure mode with no public precedent.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-054-singularities-misses-the-pole-of-gamma-x-at-zero}
+\end{counterexamplebox}
+
+\end{document}

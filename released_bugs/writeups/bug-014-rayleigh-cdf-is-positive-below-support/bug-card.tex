@@ -1,0 +1,83 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 14: Rayleigh CDF is positive below support}
+
+\begin{counterexamplebox}
+\textbf{Task.} Compute the CDF of a Rayleigh random variable below its support.
+\[
+R\sim\operatorname{Rayleigh}(1),\qquad F_R(-1)=\operatorname{cdf}(R)(-1)
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+\operatorname{cdf}(R)(-1)=1-e^{-1/2}.
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+\operatorname{cdf}(R)(-1)=0.
+\]
+
+\medskip
+\textbf{Explanation.} A Rayleigh random variable has support \([0,\infty)\), so
+the event \(R\leq -1\) is empty.  \SymPy{} is extending the nonnegative-branch
+formula \(1-e^{-z^2/2}\) to \(z<0\), where the CDF should instead be zero.
+
+\medskip
+\textbf{Likely root cause.} The diagnosis points to
+\nolinkurl{sympy/stats/crv_types.py}: \texttt{RayleighDistribution.\_cdf}
+returns an unguarded formula even though the distribution declares support
+\([0,\infty)\), and \nolinkurl{sympy/stats/crv.py} accepts that custom CDF
+before generic support handling.  Deduplication frames this as a new failure
+mode with no public precedent.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-014-rayleigh-cdf-is-positive-below-support}
+\end{counterexamplebox}
+
+\end{document}

@@ -1,0 +1,89 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 44: continuous\_domain Misses Positive Periodic Intervals}
+
+\begin{counterexamplebox}
+\textbf{Task.} Find the real continuous domain of a square root with a
+periodic radicand.
+\[
+  \operatorname{continuous\_domain}(\sqrt{\sin(x)},x,\mathbb{R})
+\]
+
+\medskip
+\textbf{SymPy's answer.}
+\[
+  \operatorname{continuous\_domain}(\sqrt{\sin(x)},x,\mathbb{R})
+  = \operatorname{Interval}(0,\pi)
+\]
+
+\medskip
+\textbf{Correct answer.}
+\[
+  \bigcup_{n\in\mathbb{Z}} [2n\pi,(2n+1)\pi]
+\]
+
+\medskip
+\textbf{Explanation.} The returned set excludes \(5\pi/2\), but
+\(\sin(5\pi/2)=1\), so \(\sqrt{\sin(5\pi/2)}=1\). The missing point lies in
+the translated positive interval \([2\pi,3\pi]\), so this is not an equivalent
+single-period representation.
+
+\medskip
+\textbf{Likely root cause.} The diagnosis identifies
+\nolinkurl{sympy/calculus/util.py} calling
+\texttt{solve\_univariate\_inequality} for the radical constraint
+\(\sin(x)\geq 0\); the inequality solver in
+\nolinkurl{sympy/solvers/inequalities.py} solves only on one period and returns
+that slice without lifting it over all integer translates. This single-period
+root cause is a known public defect (open issue \#27573, closed \#9721, fixes
+\#27720 / \#27745); the specific \nolinkurl{continuous_domain(sqrt(sin(x)))}
+composition appears unreported.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-044-continuous-domain-misses-positive-periodic-intervals}
+\end{counterexamplebox}
+
+\end{document}

@@ -1,0 +1,86 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage[skins,breakable]{tcolorbox}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\newcommand{\SymPy}{SymPy}
+
+% Public artifact repository; \bugbundle links a bug's bundle folder into it.
+% TODO: set the public artifact repository URL before release.
+\newcommand{\artifactrepo}{https://github.com/TODO-org/TODO-repo}
+\newcommand{\bugbundle}[1]{\href{\artifactrepo/tree/main/bug-report/#1}{\nolinkurl{bug-report/#1/}}}
+
+\newtcolorbox{counterexamplebox}{
+  enhanced,
+  colback=yellow!5,
+  colframe=orange!70!black,
+  arc=2mm,
+  boxrule=0.8pt,
+  left=4mm,
+  right=4mm,
+  top=3mm,
+  bottom=3mm,
+  before=\par\medskip\noindent,
+  after=\par\medskip,
+  before upper=\raggedright
+}
+
+\title{SymPy Bug Card}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Bug 5: antiderivative has the wrong sign for negative \(x\)}
+
+\begin{counterexamplebox}
+\textbf{Task.} Compute an indefinite integral:
+\[
+\int \frac{\sqrt{x^2+1}}{x}\,dx .
+\]
+
+\medskip
+\textbf{SymPy's answer.} \SymPy{} returns
+\[
+\frac{x}{\sqrt{1+x^{-2}}}
+-\operatorname{asinh}\!\left(\frac{1}{x}\right)
++\frac{1}{x\sqrt{1+x^{-2}}}.
+\]
+
+\medskip
+\textbf{Correct answer.} The returned formula differentiates to
+\[
+\sqrt{1+x^{-2}},
+\]
+which differs from the original integrand \(\sqrt{x^2+1}/x\) on the negative
+real interval.
+
+\medskip
+\textbf{Explanation.} An antiderivative must differentiate back to the
+integrand. Here, substituting \(x=-2\) after differentiation gives
+\(+\sqrt{5}/2\), while the original integrand gives \(-\sqrt{5}/2\).
+
+\medskip
+\textbf{Likely root cause.} The diagnosis locates the branch loss in
+\nolinkurl{sympy/integrals/meijerint.py}, where the Meijer-G indefinite
+integration path rewrites through an \(x^2\) argument and then denests powers,
+producing a positive-branch formula without the needed \(\operatorname{sign}(x)\)
+factor. This is a new instance of a known failure mode.
+
+\medskip
+\textbf{Artifact (GitHub).} \bugbundle{bug-005-antiderivative-has-the-wrong-sign-for-negative-x}
+\end{counterexamplebox}
+
+\end{document}
