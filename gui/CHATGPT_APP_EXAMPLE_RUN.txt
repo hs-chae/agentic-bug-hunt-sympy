@@ -1,4 +1,4 @@
-Start Codex in the ChatGPT desktop app from any writable parent folder. Clone agentic-bug-hunt-sympy, use the cloned repository as the command working directory, and run a fully automatic example_run of the GPT-5.6 GUI pipeline.
+You are Codex running in the ChatGPT desktop app. The current workspace is a writable parent folder, not necessarily the repository. Clone agentic-bug-hunt-sympy, use the cloned repository as the command working directory, and run a fully automatic example_run of the GPT-5.6 GUI pipeline.
 
 Goal:
 Clone the private gui branch, run exactly one hunter batch, validate it, advance once after validation passes, and report the next phase and batch.
