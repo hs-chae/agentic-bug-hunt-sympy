@@ -38,6 +38,20 @@ PHASE_PLAN = {
     "writeup": "gui_writeup_plan.json",
 }
 
+CORRECTNESS_SCOPE = """\
+# Task Scope
+
+This packet is ordinary software quality assurance for SymPy, a computer
+algebra library. The words bug and hunter refer only to incorrect
+symbolic-mathematics results. Limit all work to the authorized local checkout
+and public SymPy issue or documentation pages; do not expand the task to
+unrelated code or systems.
+"""
+
+
+def add_correctness_scope(prompt: str) -> str:
+    return f"{CORRECTNESS_SCOPE.rstrip()}\n\n{prompt.lstrip()}"
+
 
 def load_harness() -> Any:
     spec = importlib.util.spec_from_file_location("cas_bug_run_harness", RUN_HARNESS_PATH)
@@ -199,7 +213,7 @@ def build_prompt(
         metadata = harness.collect_sympy_metadata(sympy_dir)
 
     if phase == "hunter":
-        return harness.build_candidate_prompt(
+        prompt = harness.build_candidate_prompt(
             plan_path,
             sympy_dir,
             run_root,
@@ -208,22 +222,24 @@ def build_prompt(
             run_root / "candidates",
             metadata,
         )
-    if phase == "verify":
-        return harness.build_verify_prompt(plan_path, sympy_dir, run_root, scratch, metadata)
-    if phase == "diagnosis":
-        return harness.build_diagnosis_prompt(plan_path, sympy_dir, run_root, scratch, metadata)
-    if phase == "dedup":
-        return harness.build_dedup_prompt(plan_path, scratch)
-    if phase == "artifact":
-        return harness.build_artifact_prompt(plan_path, sympy_dir, run_root, scratch, metadata)
-    if phase == "writeup":
-        return build_writeup_driver_prompt(
+    elif phase == "verify":
+        prompt = harness.build_verify_prompt(plan_path, sympy_dir, run_root, scratch, metadata)
+    elif phase == "diagnosis":
+        prompt = harness.build_diagnosis_prompt(plan_path, sympy_dir, run_root, scratch, metadata)
+    elif phase == "dedup":
+        prompt = harness.build_dedup_prompt(plan_path, scratch)
+    elif phase == "artifact":
+        prompt = harness.build_artifact_prompt(plan_path, sympy_dir, run_root, scratch, metadata)
+    elif phase == "writeup":
+        prompt = build_writeup_driver_prompt(
             run_root=run_root,
             sympy_dir=sympy_dir,
             plan_path=plan_path,
             packet_root=run_root / "_work" / "gui" / "batch_packets" / "writeup",
         )
-    raise ValueError(f"unsupported phase: {phase}")
+    else:
+        raise ValueError(f"unsupported phase: {phase}")
+    return add_correctness_scope(prompt)
 
 
 def build_writeup_driver_prompt(
@@ -356,29 +372,31 @@ def prepare_writeup_plan(
         detailed_tex = bug_out_dir / "detailed-analysis.tex"
         card_tex = bug_out_dir / "bug-card.tex"
         prompt_path = prompt_dir / f"writeup-bug-{index:03d}-{name}.prompt.md"
-        prompt = harness.build_writeup_bug_prompt(
-            bug_folder,
-            index,
-            str(bug.get("title", "")),
-            detailed_tex,
-            card_tex,
-            name,
-            bug_scratch,
-            harness.build_latex_compile_section(
-                latex_engine_name,
-                latex_exe,
+        prompt = add_correctness_scope(
+            harness.build_writeup_bug_prompt(
+                bug_folder,
+                index,
+                str(bug.get("title", "")),
                 detailed_tex,
-                bug_scratch / "latex",
-                doc_label="the detailed analysis (detailed-analysis.tex)",
-            ),
-            harness.build_latex_compile_section(
-                latex_engine_name,
-                latex_exe,
                 card_tex,
-                bug_scratch / "latex-card",
-                doc_label="the bug card (bug-card.tex)",
-            ),
-            artifact_repo_url,
+                name,
+                bug_scratch,
+                harness.build_latex_compile_section(
+                    latex_engine_name,
+                    latex_exe,
+                    detailed_tex,
+                    bug_scratch / "latex",
+                    doc_label="the detailed analysis (detailed-analysis.tex)",
+                ),
+                harness.build_latex_compile_section(
+                    latex_engine_name,
+                    latex_exe,
+                    card_tex,
+                    bug_scratch / "latex-card",
+                    doc_label="the bug card (bug-card.tex)",
+                ),
+                artifact_repo_url,
+            )
         )
         safe_write_text(run_root, prompt_path, prompt)
         per_bug_prompts.append(

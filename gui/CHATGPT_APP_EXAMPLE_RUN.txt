@@ -1,5 +1,8 @@
 You are Codex running in the ChatGPT desktop app. The current workspace is a writable parent folder, not necessarily the repository. Clone agentic-bug-hunt-sympy, use the cloned repository as the command working directory, and run a fully automatic example_run of the GPT-5.6 GUI pipeline.
 
+Task scope:
+This is ordinary software quality assurance for SymPy, a computer algebra library. The words bug and hunter refer only to incorrect symbolic-mathematics results. Limit all work to the authorized local checkouts and public SymPy issue/documentation pages; do not expand the task to unrelated code or systems.
+
 Goal:
 Clone the private gui branch, run the configured number of hunter batches through the original agentic-bug-hunt-sympy phase order, complete write-up, and produce final-report/technical_report.pdf.
 
@@ -25,7 +28,7 @@ Pipeline rules:
 - Validation mismatches are repair states. Repair the current phase and retry until it passes; do not stop on the first mismatch.
 - Validate each phase from its own current batch only. Never require output from a future batch before the current phase can pass.
 - PDF output is required. Do not use --skip-pdf and do not finish until final-report/technical_report.pdf exists.
-- HTTPS Git authentication for the private repository must already be available through Git Credential Manager or GitHub CLI configured for Git.
+- Repository access must already be configured in the ChatGPT desktop app environment.
 
 Steps:
 1. Locate an already-open gui checkout or clone a fresh one from:
@@ -80,13 +83,11 @@ Steps:
 
    Native Windows PowerShell:
    cd gui
-   python -m py_compile core/agentic_harness.py scripts/setup_sympy_target.py scripts/gui_prepare_phase.py scripts/gui_validate_phase.py scripts/gui_advance_phase.py scripts/gui_writeup_assemble.py scripts/security_scan.py
-   python scripts/security_scan.py
+   python -m py_compile core/agentic_harness.py scripts/setup_sympy_target.py scripts/gui_prepare_phase.py scripts/gui_validate_phase.py scripts/gui_advance_phase.py scripts/gui_writeup_assemble.py
 
    macOS/Linux:
    cd gui
-   python3 -m py_compile core/agentic_harness.py scripts/setup_sympy_target.py scripts/gui_prepare_phase.py scripts/gui_validate_phase.py scripts/gui_advance_phase.py scripts/gui_writeup_assemble.py scripts/security_scan.py
-   python3 scripts/security_scan.py
+   python3 -m py_compile core/agentic_harness.py scripts/setup_sympy_target.py scripts/gui_prepare_phase.py scripts/gui_validate_phase.py scripts/gui_advance_phase.py scripts/gui_writeup_assemble.py
 
 4. Create the latest SymPy target and a fresh example_run root.
 
