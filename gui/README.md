@@ -73,8 +73,9 @@ python3 scripts/gui_advance_phase.py --run-root "$RUN_ROOT" --batch 1 --phase hu
 ```
 
 Repeat for `verify`, `diagnosis`, `dedup`, and `artifact` as directed by the
-advance output. Validation failures are soft blocks: fix the current phase files
-and rerun validation before advancing.
+advance output. A validation mismatch is an automatic repair state: fix only the
+current phase files and rerun validation until it passes before advancing. A
+phase never requires output from a later batch.
 
 For write-up:
 

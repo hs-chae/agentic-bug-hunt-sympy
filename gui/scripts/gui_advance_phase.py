@@ -61,7 +61,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strict-exit",
         action="store_true",
-        help="Return a nonzero process exit code instead of a blocked JSON state when advancement is unsafe.",
+        help="Return a nonzero process exit code when advancement is unsafe.",
     )
     return parser.parse_args()
 
@@ -153,6 +153,7 @@ def advance_hunter(harness: Any, run_root: Path, batch: int, *, force: bool) -> 
         "advanced_from": "hunter",
         "hunter_status": status,
         "next_phase": "verify",
+        "next_batch": batch,
         "next_plan": display_path(verify_batch_path, run_root),
         "candidates": len(verify_entries),
     }
@@ -374,12 +375,12 @@ def main() -> int:
     except SystemExit as exc:
         result = {
             "advanced": False,
-            "status": "blocked_needs_validation",
+            "status": "needs_validation",
             "phase": args.phase,
             "batch": args.batch,
             "plan_path": str(plan_path),
             "error": str(exc),
-            "next_action": "run gui_validate_phase; if it reports blocked, fix current phase outputs and rerun validation",
+            "next_action": "run gui_validate_phase; repair current phase outputs and rerun validation until it passes",
         }
         state_path = write_gui_state(run_root, result)
         print(json.dumps({**result, "state_path": str(state_path)}, indent=2, sort_keys=True))

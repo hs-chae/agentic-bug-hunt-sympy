@@ -60,7 +60,7 @@ class ValidateAdvanceTests(unittest.TestCase):
             self.assertNotIn("Traceback", proc.stderr)
             payload = json.loads(proc.stdout)
             self.assertFalse(payload["ok"])
-            self.assertEqual(payload["status"], "blocked")
+            self.assertEqual(payload["status"], "needs_repair")
             self.assertTrue(any("not an object" in error for error in payload["errors"]))
             self.assertTrue((root / "_work" / "gui" / "validation" / "batch-001-verify.json").is_file())
             self.assertFalse((root / "_work" / "gui" / "repairs").exists())
@@ -83,8 +83,49 @@ class ValidateAdvanceTests(unittest.TestCase):
             self.assertEqual(proc.stderr, "")
             payload = json.loads(proc.stdout)
             self.assertFalse(payload["advanced"])
-            self.assertEqual(payload["status"], "blocked_needs_validation")
+            self.assertEqual(payload["status"], "needs_validation")
             self.assertIn("missing validation receipt", payload["error"])
+
+    def test_hunter_batch_one_validation_does_not_require_batch_two(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan = root / "_work" / "batch-001" / "plans" / "candidate_batch.json"
+            write_json(
+                plan,
+                {
+                    "status": "candidates",
+                    "candidates": [{"title": "verified candidate"}],
+                },
+            )
+            proc = run_script(
+                "scripts/gui_validate_phase.py",
+                "--run-root",
+                str(root),
+                "--batch",
+                "1",
+                "--phase",
+                "hunter",
+                "--json",
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            payload = json.loads(proc.stdout)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["status"], "passed")
+            self.assertEqual(payload["batch"], 1)
+            self.assertNotIn("batch-002", json.dumps(payload))
+            advance = run_script(
+                "scripts/gui_advance_phase.py",
+                "--run-root",
+                str(root),
+                "--batch",
+                "1",
+                "--phase",
+                "hunter",
+            )
+            self.assertEqual(advance.returncode, 0, advance.stderr)
+            advance_payload = json.loads(advance.stdout)
+            self.assertEqual(advance_payload["next_phase"], "verify")
+            self.assertEqual(advance_payload["next_batch"], 1)
 
     def test_no_candidate_routes_to_next_hunter_after_validation(self):
         with tempfile.TemporaryDirectory() as tmp:

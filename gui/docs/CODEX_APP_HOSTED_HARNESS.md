@@ -42,9 +42,10 @@ scripts/gui_writeup_assemble.py
 refuses to advance without a matching passing receipt whose plan hash and
 validated output manifest still match the filesystem.
 
-Validation failures are nonterminal. A failed validation returns
-`status: blocked`; Codex App should fix the current phase output or report the
-blocker, then rerun validation instead of abandoning the run.
+Validation mismatches are nonterminal. A failed validation returns
+`status: needs_repair`; Codex App should repair the current phase output and
+rerun validation instead of ending the run. Validation of one batch never
+depends on a later batch.
 
 ## Batch Rule
 

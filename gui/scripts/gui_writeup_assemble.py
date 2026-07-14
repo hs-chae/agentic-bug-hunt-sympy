@@ -261,7 +261,7 @@ def main() -> int:
     write_public_readme(run_root, public_summary)
     bad_pdf = result.get("pdf_status") in {"failed", "error"}
     if validation_errors or bad_pdf:
-        result["status"] = "blocked"
+        result["status"] = "needs_repair"
     else:
         result["status"] = "passed"
     print(json.dumps(result, indent=2, sort_keys=True))

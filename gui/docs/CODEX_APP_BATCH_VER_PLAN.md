@@ -24,9 +24,10 @@ receipt that binds:
 - plan hash
 - validation result
 
-If the receipt is missing, stale, or failing, advancement is blocked but the run
-is still alive. Run validation, fix only the current phase outputs when
-validation reports `status: blocked`, and retry validation before advancing.
+If the receipt is missing, stale, or failing, advancement returns
+`status: needs_validation` and the run remains active. Run validation, repair
+only the current phase outputs when it reports `status: needs_repair`, and retry
+validation until it passes before advancing.
 
 ## Empty Batch Contract
 

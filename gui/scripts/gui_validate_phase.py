@@ -472,9 +472,9 @@ def main() -> int:
         "batch": args.batch,
         "plan_path": str(plan_path),
         "ok": not errors,
-        "status": "passed" if not errors else "blocked",
+        "status": "passed" if not errors else "needs_repair",
         "can_advance": not errors,
-        "next_action": "advance" if not errors else "fix_current_phase_outputs_then_rerun_validation",
+        "next_action": "advance" if not errors else "repair_current_phase_and_rerun_validation",
         "errors": errors,
     }
     receipt = write_receipt(
@@ -490,7 +490,7 @@ def main() -> int:
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
-        print("ok" if result["ok"] else "blocked")
+        print("ok" if result["ok"] else "needs_repair")
         for error in errors:
             print(f"- {error}")
     return 1 if args.strict_exit and errors else 0
