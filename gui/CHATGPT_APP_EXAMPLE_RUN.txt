@@ -1,12 +1,12 @@
-Open agentic-bug-hunt-sympy in the ChatGPT desktop app and run a fully automatic example_run of the GPT-5.6 GUI pipeline.
+Start Codex in the ChatGPT desktop app from any writable parent folder. Clone agentic-bug-hunt-sympy, use the cloned repository as the command working directory, and run a fully automatic example_run of the GPT-5.6 GUI pipeline.
 
 Goal:
-Run exactly one hunter batch, validate it, advance once after validation passes, and report the next phase and batch.
+Clone the private gui branch, run exactly one hunter batch, validate it, advance once after validation passes, and report the next phase and batch.
 
 Platform rules:
 - On Windows, use the Windows-native agent with PowerShell. Do not use WSL, bash, Git Bash, .sh scripts, tail, sed, or Unix path syntax.
 - On macOS or Linux, use the native shell.
-- Keep the repository as the working directory.
+- After cloning, treat the cloned repository as the working directory for every file and command operation. Explicitly set cwd/workdir to that repository; do not rely only on a persistent shell cd.
 - This example_run contains batch 1 only. Do not prepare, inspect, validate, or require batch 2.
 - Use the Python executable available to the active agent: python on native Windows, normally python3 on macOS/Linux.
 
@@ -19,15 +19,58 @@ Pipeline rules:
 - Subagent model: gpt-5.6-sol.
 - Reasoning effort: use the app default unless explicitly changed by the operator.
 - Validation mismatches are repair states. Repair the current phase and retry until it passes; do not stop on the first mismatch.
+- HTTPS Git authentication for the private repository must already be available through Git Credential Manager or GitHub CLI configured for Git.
 
 Steps:
-1. Verify the repository shape and current platform. Confirm these files exist:
+1. Locate an already-open gui checkout or clone a fresh one from:
+   https://github.com/hs-chae/agentic-bug-hunt-sympy.git
+
+   Native Windows PowerShell:
+   $RepoUrl = "https://github.com/hs-chae/agentic-bug-hunt-sympy.git"
+   $RepoName = "agentic-bug-hunt-sympy"
+   $CurrentBranch = ""
+   if (Test-Path ".\.git") {
+       $CurrentBranch = git branch --show-current
+   }
+   if ((Test-Path ".\.git") -and (Test-Path ".\gui\CHATGPT_APP_EXAMPLE_RUN.txt") -and ($CurrentBranch -eq "gui")) {
+       $RepoDir = (Get-Location).Path
+   } else {
+       $ParentDir = (Get-Location).Path
+       $RepoDir = [IO.Path]::GetFullPath((Join-Path $ParentDir $RepoName))
+       if (Test-Path $RepoDir) {
+           $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+           $RepoDir = [IO.Path]::GetFullPath((Join-Path $ParentDir "$RepoName-$Stamp"))
+       }
+       git -c core.longpaths=true clone --branch gui --single-branch $RepoUrl $RepoDir
+       if ($LASTEXITCODE -ne 0) { throw "Repository clone failed; verify private GitHub authentication" }
+   }
+   Set-Location $RepoDir
+
+   macOS/Linux:
+   REPO_URL="https://github.com/hs-chae/agentic-bug-hunt-sympy.git"
+   REPO_NAME="agentic-bug-hunt-sympy"
+   if test -d .git && test -f gui/CHATGPT_APP_EXAMPLE_RUN.txt && test "$(git branch --show-current)" = "gui"; then
+       REPO_DIR="$(pwd -P)"
+   else
+       PARENT_DIR="$(pwd -P)"
+       REPO_DIR="$PARENT_DIR/$REPO_NAME"
+       if test -e "$REPO_DIR"; then
+           REPO_DIR="$PARENT_DIR/$REPO_NAME-$(date +%Y%m%d-%H%M%S)"
+       fi
+       git clone --branch gui --single-branch "$REPO_URL" "$REPO_DIR"
+   fi
+   cd "$REPO_DIR"
+
+   From this point onward, use RepoDir/REPO_DIR as cwd/workdir for every tool call. The ChatGPT task may still display the parent folder as its visual workspace; command and file operations must stay inside the cloned repository.
+
+2. Verify the repository shape, gui branch, and current platform. Confirm these files exist:
    gui/scripts/setup_sympy_target.py
    gui/scripts/gui_prepare_phase.py
    gui/scripts/gui_validate_phase.py
    gui/scripts/gui_advance_phase.py
+   Confirm git branch --show-current returns gui.
 
-2. Enter gui and run local checks.
+3. Enter gui and run local checks.
 
    Native Windows PowerShell:
    cd gui
@@ -39,7 +82,7 @@ Steps:
    python3 -m py_compile core/agentic_harness.py scripts/setup_sympy_target.py scripts/gui_prepare_phase.py scripts/gui_validate_phase.py scripts/gui_advance_phase.py scripts/gui_writeup_assemble.py scripts/security_scan.py
    python3 scripts/security_scan.py
 
-3. Create the latest SymPy target and a fresh example_run root.
+4. Create the latest SymPy target and a fresh example_run root.
 
    Native Windows PowerShell:
    $TargetDir = python scripts/setup_sympy_target.py --base-dir .\_local\sympy-target --no-conda --output path
@@ -54,7 +97,7 @@ Steps:
    rm -rf "$RUN_ROOT"
    mkdir -p "$RUN_ROOT"
 
-4. Prepare exactly one hunter packet.
+5. Prepare exactly one hunter packet.
 
    Native Windows PowerShell:
    python scripts/gui_prepare_phase.py --run-root "$RunRoot" --sympy-dir "$TargetDir" --batch 1 --phase hunter --model gpt-5.6-sol
@@ -62,9 +105,9 @@ Steps:
    macOS/Linux:
    python3 scripts/gui_prepare_phase.py --run-root "$RUN_ROOT" --sympy-dir "$TARGET_DIR" --batch 1 --phase hunter --model gpt-5.6-sol
 
-5. Read the generated batch-001 hunter packet and prompt under _work/gui/batch_packets. Run the prompt as exactly one ChatGPT desktop app subagent using gpt-5.6-sol. Give it the full prompt contents and no phase-changing instructions. Wait for it to write the requested batch-1 hunter output.
+6. Read the generated batch-001 hunter packet and prompt under _work/gui/batch_packets. Run the prompt as exactly one ChatGPT desktop app subagent using gpt-5.6-sol. Give it the full prompt contents and no phase-changing instructions. Wait for it to write the requested batch-1 hunter output.
 
-6. Validate only batch 1.
+7. Validate only batch 1.
 
    Native Windows PowerShell:
    python scripts/gui_validate_phase.py --run-root "$RunRoot" --sympy-dir "$TargetDir" --batch 1 --phase hunter --json
@@ -74,9 +117,9 @@ Steps:
 
    Confirm that the returned batch is 1 and plan_path ends in _work/batch-001/plans/candidate_batch.json. If any result mentions batch 2, treat that as an orchestration mistake and rerun the exact batch-1 command. Never create batch 2 for this example_run.
 
-7. If validation returns needs_repair, blocked, or ok false, inspect the errors, repair only the batch-1 hunter output, and rerun the same validation. If needed, rerun the same hunter subagent with the validator errors as repair instructions. Repeat until validation passes.
+8. If validation returns needs_repair, blocked, or ok false, inspect the errors, repair only the batch-1 hunter output, and rerun the same validation. If needed, rerun the same hunter subagent with the validator errors as repair instructions. Repeat until validation passes.
 
-8. After validation passes, advance once.
+9. After validation passes, advance once.
 
    Native Windows PowerShell:
    python scripts/gui_advance_phase.py --run-root "$RunRoot" --batch 1 --phase hunter
@@ -84,7 +127,8 @@ Steps:
    macOS/Linux:
    python3 scripts/gui_advance_phase.py --run-root "$RUN_ROOT" --batch 1 --phase hunter
 
-9. Report:
+10. Report:
+- cloned repository path and commit
 - whether example_run passed
 - native platform and shell used
 - TARGET_DIR
