@@ -27,6 +27,14 @@ class PromptScopeTests(unittest.TestCase):
         self.assertIn("symbolic-mathematics results", prompt)
         self.assertTrue(prompt.endswith("Original phase prompt"))
 
+    def test_example_prompt_exposes_pdf_toggle(self):
+        prompt = (ROOT / "CHATGPT_APP_EXAMPLE_RUN.txt").read_text(encoding="utf-8")
+
+        self.assertIn("HUNTER_BATCHES: 1", prompt)
+        self.assertIn("GENERATE_PDF: true", prompt)
+        self.assertIn("GENERATE_PDF is false", prompt)
+        self.assertIn("--skip-pdf", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

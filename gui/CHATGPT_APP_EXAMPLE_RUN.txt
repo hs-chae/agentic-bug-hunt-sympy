@@ -4,16 +4,18 @@ Task scope:
 This is ordinary software quality assurance for SymPy, a computer algebra library. The words bug and hunter refer only to incorrect symbolic-mathematics results. Limit all work to the authorized local checkouts and public SymPy issue/documentation pages; do not expand the task to unrelated code or systems.
 
 Goal:
-Clone the private gui branch, run the configured number of hunter batches through the original agentic-bug-hunt-sympy phase order, complete write-up, and produce final-report/technical_report.pdf.
+Clone the private gui branch, run the configured number of hunter batches through the original agentic-bug-hunt-sympy phase order, complete write-up, and produce the configured TeX/PDF outputs.
 
-Run setting (edit only this value to change the example size):
+Run settings (edit only these values):
 HUNTER_BATCHES: 1
+GENERATE_PDF: true
 
 Platform rules:
 - On Windows, use the Windows-native agent with PowerShell. Do not use WSL, bash, Git Bash, .sh scripts, tail, sed, or Unix path syntax.
 - On macOS or Linux, use the native shell.
 - After cloning, treat the cloned repository as the working directory for every file and command operation. Explicitly set cwd/workdir to that repository; do not rely only on a persistent shell cd.
 - Read HUNTER_BATCHES from the run setting above; the default example is 1, and changing it to 2 must run two complete hunter batches without any other prompt edits.
+- Read GENERATE_PDF from the run setting above. true requires a compiled PDF; false keeps write-up enabled but produces TeX only.
 - Use the Python executable available to the active agent: python on native Windows, normally python3 on macOS/Linux.
 
 Pipeline rules:
@@ -27,7 +29,7 @@ Pipeline rules:
 - Reasoning effort: use the app default unless explicitly changed by the operator.
 - Validation mismatches are repair states. Repair the current phase and retry until it passes; do not stop on the first mismatch.
 - Validate each phase from its own current batch only. Never require output from a future batch before the current phase can pass.
-- PDF output is required. Do not use --skip-pdf and do not finish until final-report/technical_report.pdf exists.
+- Always produce final-report/technical_report.tex. When GENERATE_PDF is true, do not use --skip-pdf and do not finish until final-report/technical_report.pdf exists. When false, pass --skip-pdf to write-up preparation and assembly.
 - Repository access must already be configured in the ChatGPT desktop app environment.
 
 Steps:
@@ -104,7 +106,7 @@ Steps:
    rm -rf "$RUN_ROOT"
    mkdir -p "$RUN_ROOT"
 
-   Treat HUNTER_BATCHES as a positive integer. Map the single run setting above to $HunterBatches in PowerShell or HUNTER_BATCHES in macOS/Linux shell; do not ask the user to edit a second batch-count value.
+   Treat HUNTER_BATCHES as a positive integer and GENERATE_PDF as a Boolean. Map them to $HunterBatches and $GeneratePdf in PowerShell, or HUNTER_BATCHES and GENERATE_PDF in macOS/Linux shell; do not ask the user to edit duplicate setting values.
 
 5. For each BATCH from 1 through HUNTER_BATCHES, run the original repository order: hunter, verify, diagnosis, dedup, artifact. For each current phase:
    a. Prepare its packet with gui_prepare_phase.py, the current BATCH, and gpt-5.6-sol.
@@ -130,27 +132,28 @@ Steps:
 
 6. After each batch completes or becomes empty, start the next hunter batch only when BATCH is less than HUNTER_BATCHES. After BATCH equals HUNTER_BATCHES, stop hunting and continue to write-up with all accepted artifacts. Never prepare batch HUNTER_BATCHES + 1.
 
-7. Before write-up, find a LaTeX engine in this preference order: tectonic, latexmk, pdflatex. If none is available, install Tectonic without administrator privileges, preferably under gui/_local/tools, and continue. Do not use WSL on Windows.
+7. When GENERATE_PDF is true, find a LaTeX engine in this preference order: tectonic, latexmk, pdflatex. If none is available, install Tectonic without administrator privileges, preferably under gui/_local/tools, and continue. Do not use WSL on Windows. When GENERATE_PDF is false, skip engine discovery and installation and use auto as the engine argument.
 
    Native Windows PowerShell:
-   $LatexEngine = @("tectonic", "latexmk", "pdflatex") | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
+   $LatexEngine = if ($GeneratePdf) { @("tectonic", "latexmk", "pdflatex") | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1 } else { "auto" }
+   $PdfOption = if ($GeneratePdf) { @() } else { @("--skip-pdf") }
 
    macOS/Linux:
-   LATEX_ENGINE="$(command -v tectonic || command -v latexmk || command -v pdflatex || true)"
+   if test "$GENERATE_PDF" = "true"; then LATEX_ENGINE="$(command -v tectonic || command -v latexmk || command -v pdflatex || true)"; PDF_OPTION=""; else LATEX_ENGINE="auto"; PDF_OPTION="--skip-pdf"; fi
 
-8. Set FINAL_BATCH to HUNTER_BATCHES. Prepare and run the write-up packet using FINAL_BATCH as exactly one gpt-5.6-sol ChatGPT desktop app subagent. Do not pass --skip-pdf. The write-up subagent must process every generated per-bug prompt from all accepted artifacts and produce all requested TeX files.
+8. Set FINAL_BATCH to HUNTER_BATCHES. Prepare and run the write-up packet using FINAL_BATCH as exactly one gpt-5.6-sol ChatGPT desktop app subagent. Append the configured PDF option to both commands. The write-up subagent must process every generated per-bug prompt from all accepted artifacts and produce all requested TeX files.
 
    Native Windows PowerShell:
    $FinalBatch = $HunterBatches
-   python scripts/gui_prepare_phase.py --run-root "$RunRoot" --sympy-dir "$TargetDir" --batch $FinalBatch --phase writeup --model gpt-5.6-sol --latex-engine "$LatexEngine"
-   python scripts/gui_writeup_assemble.py --run-root "$RunRoot" --sympy-dir "$TargetDir" --latex-engine "$LatexEngine"
+   python scripts/gui_prepare_phase.py --run-root "$RunRoot" --sympy-dir "$TargetDir" --batch $FinalBatch --phase writeup --model gpt-5.6-sol --latex-engine "$LatexEngine" @PdfOption
+   python scripts/gui_writeup_assemble.py --run-root "$RunRoot" --sympy-dir "$TargetDir" --latex-engine "$LatexEngine" @PdfOption
 
    macOS/Linux:
    FINAL_BATCH="$HUNTER_BATCHES"
-   python3 scripts/gui_prepare_phase.py --run-root "$RUN_ROOT" --sympy-dir "$TARGET_DIR" --batch "$FINAL_BATCH" --phase writeup --model gpt-5.6-sol --latex-engine "$LATEX_ENGINE"
-   python3 scripts/gui_writeup_assemble.py --run-root "$RUN_ROOT" --sympy-dir "$TARGET_DIR" --latex-engine "$LATEX_ENGINE"
+   python3 scripts/gui_prepare_phase.py --run-root "$RUN_ROOT" --sympy-dir "$TARGET_DIR" --batch "$FINAL_BATCH" --phase writeup --model gpt-5.6-sol --latex-engine "$LATEX_ENGINE" $PDF_OPTION
+   python3 scripts/gui_writeup_assemble.py --run-root "$RUN_ROOT" --sympy-dir "$TARGET_DIR" --latex-engine "$LATEX_ENGINE" $PDF_OPTION
 
-9. If TeX validation or PDF compilation needs repair, inspect the compile log, repair only the write-up outputs, and rerun the assembler until final-report/technical_report.pdf exists. Then validate and advance write-up.
+9. Repair write-up validation errors and rerun the assembler until final-report/technical_report.tex is valid. When GENERATE_PDF is true, also repair compilation errors until final-report/technical_report.pdf exists. Then validate and advance write-up.
 
    Native Windows PowerShell:
    python scripts/gui_validate_phase.py --run-root "$RunRoot" --sympy-dir "$TargetDir" --batch $FinalBatch --phase writeup --json
@@ -171,7 +174,7 @@ Steps:
 - phase path and validation status for hunter, verify, diagnosis, dedup, artifact, and writeup
 - accepted artifact count
 - final-report/technical_report.tex path
-- final-report/technical_report.pdf path and LaTeX engine
+- GENERATE_PDF setting; when true, final-report/technical_report.pdf path and LaTeX engine
 - validation issues repaired automatically
 
 Only report an incomplete run for a concrete external failure that cannot be repaired in the workspace, such as missing repository access, unavailable app subagents, or a missing required executable.

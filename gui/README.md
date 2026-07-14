@@ -18,6 +18,42 @@ The model used for App subagents should be `gpt-5.6-sol` unless you intentionall
 choose another GPT-5.6 tier. The bridge scripts themselves do not invoke a model;
 they prepare packets, validate files, and update run state.
 
+## Automatic Example Prompt
+
+`CHATGPT_APP_EXAMPLE_RUN.txt` is the paste-ready entry point. Codex may start in
+any writable parent workspace: the prompt clones the private `gui` branch, uses
+that child checkout as the command working directory, creates workspace-local
+SymPy and run directories under `gui/_local/`, and follows the original phase
+order:
+
+```text
+hunter -> verify -> diagnosis -> dedup -> artifact -> writeup
+```
+
+The prompt works with native Windows PowerShell without WSL and with native
+macOS/Linux shells. It runs `gpt-5.6-sol` App subagents and automatically repairs
+the current phase until validation passes. Future-batch output is never required
+to validate the current batch.
+
+The two settings near the top are the only normal edits:
+
+```text
+HUNTER_BATCHES: 1
+GENERATE_PDF: true
+```
+
+Change `HUNTER_BATCHES` to `2` for two complete batches before the aggregate
+write-up. With `GENERATE_PDF: true`, Codex finds or installs a user-space LaTeX
+engine and requires `final-report/technical_report.pdf`.
+
+To disable PDF generation, change only `GENERATE_PDF: true` to
+`GENERATE_PDF: false`. Write-up remains enabled and still produces
+`final-report/technical_report.tex`; the prompt skips LaTeX-engine installation
+and passes `--skip-pdf` to both `gui_prepare_phase.py` and
+`gui_writeup_assemble.py`. For a manually shortened copy without this setting,
+remove the PDF-engine requirement in step 7 and add `--skip-pdf` to both
+write-up commands in step 8. Do not remove the write-up phase itself.
+
 ## Layout
 
 ```text
@@ -108,7 +144,7 @@ For write-up:
 
 ```sh
 python3 scripts/gui_prepare_phase.py --run-root "$RUN_ROOT" --sympy-dir "$TARGET_DIR" --batch 1 --phase writeup --model gpt-5.6-sol
-python3 scripts/gui_writeup_assemble.py --run-root "$RUN_ROOT"
+python3 scripts/gui_writeup_assemble.py --run-root "$RUN_ROOT" --sympy-dir "$TARGET_DIR"
 ```
 
 ## Outputs
