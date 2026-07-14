@@ -244,7 +244,14 @@ def sanitize_public_tree(root: Path, replacements: list[tuple[str, str]]) -> Non
 
 
 def public_replacements(run_root: Path, sympy_dir: Path | None) -> list[tuple[str, str]]:
-    replacements = [(str(run_root.resolve()), "<RUN_ROOT>")]
+    root = run_root.resolve()
+    home = Path.home().resolve()
+    replacements = [
+        (str(root), "<RUN_ROOT>"),
+        (root.as_posix(), "<RUN_ROOT>"),
+        (str(home), "<USER_HOME>"),
+        (home.as_posix(), "<USER_HOME>"),
+    ]
     if sympy_dir is not None:
         resolved = sympy_dir.resolve()
         replacements.extend(
@@ -253,7 +260,7 @@ def public_replacements(run_root: Path, sympy_dir: Path | None) -> list[tuple[st
                 (resolved.as_posix(), "<SYMPY_CHECKOUT_PATH>"),
             ]
         )
-    return replacements
+    return list(dict.fromkeys(replacements))
 
 
 def validate_artifact(harness: Any, plan_path: Path, run_root: Path, sympy_dir: Path | None) -> list[str]:

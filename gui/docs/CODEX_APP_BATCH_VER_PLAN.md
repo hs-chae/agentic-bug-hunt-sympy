@@ -1,6 +1,6 @@
-# Agentic SymPy Codex App Batch Plan
+# Agentic SymPy ChatGPT App Batch Plan
 
-This branch keeps the workflow batch-aligned: one Codex App subagent handles
+This branch keeps the workflow batch-aligned: one ChatGPT app subagent handles
 one phase for one batch.
 
 ## Phase Contract

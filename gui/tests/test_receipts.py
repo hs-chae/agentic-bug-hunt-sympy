@@ -6,6 +6,12 @@ from cas_harness.receipts import require_receipt, write_receipt
 
 
 class ReceiptManifestTests(unittest.TestCase):
+    def symlink_or_skip(self, link: Path, target: Path) -> None:
+        try:
+            link.symlink_to(target, target_is_directory=True)
+        except (NotImplementedError, OSError) as exc:
+            self.skipTest(f"directory symlinks are unavailable: {exc}")
+
     def test_require_receipt_rejects_changed_validated_output(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -37,7 +43,7 @@ class ReceiptManifestTests(unittest.TestCase):
             real = base / "private-var"
             alias = base / "var"
             real.mkdir()
-            alias.symlink_to(real, target_is_directory=True)
+            self.symlink_or_skip(alias, real)
             root = alias / "run"
             plan = root / "_work" / "batch-001" / "plans" / "verify_batch.json"
             report = root / "candidates" / "candidate-001" / "verify_report.md"

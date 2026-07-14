@@ -1,0 +1,97 @@
+Open agentic-bug-hunt-sympy in the ChatGPT desktop app and run a fully automatic example_run of the GPT-5.6 GUI pipeline.
+
+Goal:
+Run exactly one hunter batch, validate it, advance once after validation passes, and report the next phase and batch.
+
+Platform rules:
+- On Windows, use the Windows-native agent with PowerShell. Do not use WSL, bash, Git Bash, .sh scripts, tail, sed, or Unix path syntax.
+- On macOS or Linux, use the native shell.
+- Keep the repository as the working directory.
+- This example_run contains batch 1 only. Do not prepare, inspect, validate, or require batch 2.
+- Use the Python executable available to the active agent: python on native Windows, normally python3 on macOS/Linux.
+
+Pipeline rules:
+- Do not commit or push.
+- Do not call harness/scripts/run_harness.py.
+- Do not use codex exec.
+- Do not ask me to run phase prompts manually.
+- Run exactly one ChatGPT desktop app subagent for the hunter packet.
+- Subagent model: gpt-5.6-sol.
+- Reasoning effort: use the app default unless explicitly changed by the operator.
+- Validation mismatches are repair states. Repair the current phase and retry until it passes; do not stop on the first mismatch.
+
+Steps:
+1. Verify the repository shape and current platform. Confirm these files exist:
+   gui/scripts/setup_sympy_target.py
+   gui/scripts/gui_prepare_phase.py
+   gui/scripts/gui_validate_phase.py
+   gui/scripts/gui_advance_phase.py
+
+2. Enter gui and run local checks.
+
+   Native Windows PowerShell:
+   cd gui
+   python -m py_compile core/agentic_harness.py scripts/setup_sympy_target.py scripts/gui_prepare_phase.py scripts/gui_validate_phase.py scripts/gui_advance_phase.py scripts/gui_writeup_assemble.py scripts/security_scan.py
+   python scripts/security_scan.py
+
+   macOS/Linux:
+   cd gui
+   python3 -m py_compile core/agentic_harness.py scripts/setup_sympy_target.py scripts/gui_prepare_phase.py scripts/gui_validate_phase.py scripts/gui_advance_phase.py scripts/gui_writeup_assemble.py scripts/security_scan.py
+   python3 scripts/security_scan.py
+
+3. Create the latest SymPy target and a fresh example_run root.
+
+   Native Windows PowerShell:
+   $TargetDir = python scripts/setup_sympy_target.py --base-dir .\_local\sympy-target --no-conda --output path
+   if ($LASTEXITCODE -ne 0 -or -not $TargetDir) { throw "SymPy target setup failed" }
+   $RunRoot = [IO.Path]::GetFullPath((Join-Path $PWD ".\_local\sympy-gui-example_run"))
+   if (Test-Path $RunRoot) { Remove-Item -Recurse -Force $RunRoot }
+   New-Item -ItemType Directory -Force $RunRoot | Out-Null
+
+   macOS/Linux:
+   TARGET_DIR="$(python3 scripts/setup_sympy_target.py --base-dir ./_local/sympy-target --no-conda --output path)"
+   RUN_ROOT="./_local/sympy-gui-example_run"
+   rm -rf "$RUN_ROOT"
+   mkdir -p "$RUN_ROOT"
+
+4. Prepare exactly one hunter packet.
+
+   Native Windows PowerShell:
+   python scripts/gui_prepare_phase.py --run-root "$RunRoot" --sympy-dir "$TargetDir" --batch 1 --phase hunter --model gpt-5.6-sol
+
+   macOS/Linux:
+   python3 scripts/gui_prepare_phase.py --run-root "$RUN_ROOT" --sympy-dir "$TARGET_DIR" --batch 1 --phase hunter --model gpt-5.6-sol
+
+5. Read the generated batch-001 hunter packet and prompt under _work/gui/batch_packets. Run the prompt as exactly one ChatGPT desktop app subagent using gpt-5.6-sol. Give it the full prompt contents and no phase-changing instructions. Wait for it to write the requested batch-1 hunter output.
+
+6. Validate only batch 1.
+
+   Native Windows PowerShell:
+   python scripts/gui_validate_phase.py --run-root "$RunRoot" --sympy-dir "$TargetDir" --batch 1 --phase hunter --json
+
+   macOS/Linux:
+   python3 scripts/gui_validate_phase.py --run-root "$RUN_ROOT" --sympy-dir "$TARGET_DIR" --batch 1 --phase hunter --json
+
+   Confirm that the returned batch is 1 and plan_path ends in _work/batch-001/plans/candidate_batch.json. If any result mentions batch 2, treat that as an orchestration mistake and rerun the exact batch-1 command. Never create batch 2 for this example_run.
+
+7. If validation returns needs_repair, blocked, or ok false, inspect the errors, repair only the batch-1 hunter output, and rerun the same validation. If needed, rerun the same hunter subagent with the validator errors as repair instructions. Repeat until validation passes.
+
+8. After validation passes, advance once.
+
+   Native Windows PowerShell:
+   python scripts/gui_advance_phase.py --run-root "$RunRoot" --batch 1 --phase hunter
+
+   macOS/Linux:
+   python3 scripts/gui_advance_phase.py --run-root "$RUN_ROOT" --batch 1 --phase hunter
+
+9. Report:
+- whether example_run passed
+- native platform and shell used
+- TARGET_DIR
+- RUN_ROOT
+- hunter candidate count
+- validation status
+- next_phase and next_batch
+- validation issues repaired automatically
+
+Only report an incomplete run for a concrete external failure that cannot be repaired in the workspace, such as missing repository access, unavailable app subagents, or a missing required executable.

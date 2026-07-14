@@ -12,6 +12,12 @@ from cas_harness.paths import (
 
 
 class PathPolicyTests(unittest.TestCase):
+    def symlink_or_skip(self, link: Path, target: Path) -> None:
+        try:
+            link.symlink_to(target, target_is_directory=True)
+        except (NotImplementedError, OSError) as exc:
+            self.skipTest(f"directory symlinks are unavailable: {exc}")
+
     def test_validate_report_filename_rejects_path_traversal(self):
         with self.assertRaises(PathPolicyError):
             validate_report_filename("../../outside.tex")
@@ -19,6 +25,10 @@ class PathPolicyTests(unittest.TestCase):
     def test_validate_report_filename_rejects_absolute_path(self):
         with self.assertRaises(PathPolicyError):
             validate_report_filename("/tmp/outside.tex")
+
+    def test_validate_report_filename_rejects_windows_absolute_path(self):
+        with self.assertRaises(PathPolicyError):
+            validate_report_filename(r"C:\Users\example\outside.tex")
 
     def test_validate_report_filename_accepts_tex_filename(self):
         self.assertEqual(validate_report_filename("technical_report.tex"), "technical_report.tex")
@@ -60,14 +70,14 @@ class PathPolicyTests(unittest.TestCase):
     def test_safe_run_path_rejects_symlinked_output_dir(self):
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
             root = Path(tmp)
-            (root / "bug-report").symlink_to(outside, target_is_directory=True)
+            self.symlink_or_skip(root / "bug-report", Path(outside))
             with self.assertRaises(PathPolicyError):
                 safe_run_path(root, "bug-report/file.txt", allowed_subtree="bug-report")
 
     def test_safe_mkdir_rejects_symlinked_output_dir_escape(self):
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
             root = Path(tmp)
-            (root / "_work").symlink_to(outside, target_is_directory=True)
+            self.symlink_or_skip(root / "_work", Path(outside))
             with self.assertRaises(PathPolicyError):
                 safe_mkdir(root, root / "_work" / "gui")
 
@@ -76,7 +86,7 @@ class PathPolicyTests(unittest.TestCase):
             root = Path(tmp)
             real_work = root / "real-work"
             real_work.mkdir()
-            (root / "_work").symlink_to(real_work, target_is_directory=True)
+            self.symlink_or_skip(root / "_work", real_work)
             got = safe_mkdir(root, root / "_work" / "gui")
             self.assertEqual(got, (real_work / "gui").resolve())
 
@@ -86,14 +96,14 @@ class PathPolicyTests(unittest.TestCase):
             target = base / "target"
             target.mkdir()
             link = base / "run-root"
-            link.symlink_to(target, target_is_directory=True)
+            self.symlink_or_skip(link, target)
             self.assertEqual(resolve_run_root(link), target.resolve())
 
     def test_resolve_run_root_rejects_broken_symlink(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             link = base / "run-root"
-            link.symlink_to(base / "missing", target_is_directory=True)
+            self.symlink_or_skip(link, base / "missing")
             with self.assertRaises(PathPolicyError):
                 resolve_run_root(link)
 

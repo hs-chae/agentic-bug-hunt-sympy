@@ -17,6 +17,7 @@ BANNED_PATTERNS = (
     "/home/",
     "/Users/",
     "/tmp/",
+    "\\Users\\",
     "OPENAI_API_KEY",
     "sk-",
 )

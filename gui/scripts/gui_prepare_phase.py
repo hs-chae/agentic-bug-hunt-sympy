@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Prepare Codex App phase packets for the agentic SymPy harness."""
+"""Prepare ChatGPT desktop app phase packets for the agentic SymPy harness."""
 
 from __future__ import annotations
 
 import argparse
 import importlib.util
 import json
+import os
+import shlex
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -56,7 +59,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default="gpt-5.6-sol",
-        help="Codex App model to use for the subagent packet. Default: gpt-5.6-sol.",
+        help="ChatGPT app model to use for the subagent packet. Default: gpt-5.6-sol.",
     )
     parser.add_argument("--writeup-report-name", default="technical_report.tex")
     parser.add_argument("--artifact-repo-url", default="")
@@ -154,7 +157,7 @@ def build_summary(
             "max_bugs": "",
             "max_hours": "",
             "max_empty_passes": "",
-            "codex_home": {"note": "Codex App bridge run"},
+            "codex_home": {"note": "ChatGPT desktop app bridge run"},
         },
         "stop_reason": "codex_app_bridge_writeup",
         "bug_outcomes": {
@@ -230,11 +233,25 @@ def build_writeup_driver_prompt(
     plan_path: Path,
     packet_root: Path,
 ) -> str:
+    python_name = "python" if os.name == "nt" else "python3"
+    command = [
+        python_name,
+        "scripts/gui_writeup_assemble.py",
+        "--run-root",
+        str(run_root),
+        "--sympy-dir",
+        str(sympy_dir),
+    ]
+    command_text = (
+        subprocess.list2cmdline(command)
+        if os.name == "nt"
+        else " ".join(shlex.quote(part) for part in command)
+    )
     return "\n".join(
         [
-            "# Codex App Write-up Driver",
+            "# ChatGPT Desktop App Write-up Driver",
             "",
-            "You are the Codex App write-up worker for this run.",
+            "You are the ChatGPT desktop app write-up worker for this run.",
             "",
             f"Read the write-up plan at `{plan_path}`. It lists per-bug prompt",
             "files under `per_bug_prompts`.",
@@ -245,15 +262,13 @@ def build_writeup_driver_prompt(
             "",
             "After all per-bug TeX files are written, run:",
             "",
-            "```sh",
-            "python3 scripts/gui_writeup_assemble.py \\",
-            f"  --run-root {run_root} \\",
-            f"  --sympy-dir {sympy_dir}",
+            "```text",
+            command_text,
             "```",
             "",
             "If assembly or compilation reports errors, inspect and fix the relevant",
             "TeX files, then rerun the assembler. Stop only when the assembler passes",
-            "or after recording the remaining blocker in your final message.",
+            "or after recording a concrete external failure in your final message.",
             "",
             f"Scratch files belong under `{packet_root}` or `_work/writeup/scratch/`.",
             "",
@@ -421,9 +436,9 @@ def write_packet(
     expected_outputs: list[str],
 ) -> None:
     lines = [
-        f"# Codex App Batch Packet: batch {batch:03d} {phase}",
+        f"# ChatGPT Desktop App Batch Packet: batch {batch:03d} {phase}",
         "",
-        "Run exactly one Codex App subagent for this packet.",
+        "Run exactly one ChatGPT desktop app subagent for this packet.",
         "",
         "## Source Of Truth",
         "",

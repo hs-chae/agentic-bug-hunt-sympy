@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Assemble and validate the Codex App write-up deliverable.
+"""Assemble and validate the ChatGPT desktop app write-up deliverable.
 
 This script performs the deterministic half of the original write-up phase.
-Codex App subagents write the per-bug TeX files; this script splices them into
+ChatGPT app subagents write the per-bug TeX files; this script splices them into
 the standalone technical report, validates the structure, optionally compiles
 the PDF, and updates run.json/README.md.
 """
@@ -75,9 +75,9 @@ def write_public_readme(run_root: Path, public: dict[str, Any]) -> None:
     writeup = public.get("writeup") if isinstance(public.get("writeup"), dict) else {}
     outcomes = public.get("bug_outcomes") if isinstance(public.get("bug_outcomes"), dict) else {}
     lines = [
-        "# Agentic SymPy Codex App Run",
+        "# Agentic SymPy ChatGPT App Run",
         "",
-        "This directory contains sanitized public outputs from a Codex App harness run.",
+        "This directory contains sanitized public outputs from a ChatGPT app harness run.",
         "",
         "## Target",
         "",

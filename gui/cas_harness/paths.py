@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path, PurePath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
 class PathPolicyError(ValueError):
@@ -13,12 +13,19 @@ RESERVED_OUTPUT_DIRS = ("_work", "candidates", "bug-report", "final-report")
 
 
 def validate_report_filename(raw: str) -> str:
-    p = PurePath(raw)
-    if p.is_absolute() or p.name != raw or p.name in {"", ".", ".."}:
+    posix = PurePosixPath(raw)
+    windows = PureWindowsPath(raw)
+    if (
+        posix.is_absolute()
+        or windows.is_absolute()
+        or posix.name != raw
+        or windows.name != raw
+        or raw in {"", ".", ".."}
+    ):
         raise PathPolicyError("report name must be a filename, not a path")
-    if not p.name.endswith(".tex"):
+    if not raw.endswith(".tex"):
         raise PathPolicyError("report name must end with .tex")
-    return p.name
+    return raw
 
 
 def resolve_run_root(raw: Path) -> Path:

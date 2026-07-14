@@ -3,7 +3,11 @@
 ## Harness Invariants
 
 - Do not rely on chat history. Re-read `RUN_ROOT` state.
-- Use the Codex App bridge flow only.
+- Use the ChatGPT desktop app bridge flow only.
+- On Windows, use the native Windows agent and PowerShell. Do not require WSL,
+  Bash, or `.sh` scripts.
+- Use the Python executable available to the active agent (`python` on native
+  Windows, normally `python3` on macOS/Linux).
 - Do not run deprecated local runner flows.
 - Use `gpt-5.6-sol` for App subagents unless the operator explicitly selects
   another GPT-5.6 tier.
@@ -13,4 +17,4 @@
 - Do not publish absolute paths, raw logs, raw prompts, account paths, or token
   telemetry.
 - Keep every output path inside `RUN_ROOT`.
-- If a plan is malformed, stop and report the schema error.
+- If a plan is malformed, repair the current phase output and rerun validation.

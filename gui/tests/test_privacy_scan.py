@@ -36,6 +36,16 @@ class PrivacyScanTests(unittest.TestCase):
             self.assertTrue(any("README.md" in item for item in findings))
             self.assertFalse(any("PLAN.md" in item for item in findings))
 
+    def test_security_scan_flags_windows_user_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "README.md"
+            path.write_text(
+                "private C:\\Users\\Example\\sympy checkout\n",
+                encoding="utf-8",
+            )
+            findings = scan_paths([path])
+            self.assertTrue(any("\\Users\\" in item for item in findings))
+
 
 if __name__ == "__main__":
     unittest.main()

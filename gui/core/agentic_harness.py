@@ -1680,9 +1680,14 @@ def _latex_search_dirs() -> list[Path]:
     dirs: list[Path] = [Path(sys.executable).resolve().parent]
     conda_prefix = os.environ.get("CONDA_PREFIX")
     if conda_prefix:
-        dirs.append(Path(conda_prefix) / "bin")
+        prefix = Path(conda_prefix)
+        dirs += [prefix / "bin", prefix / "Scripts", prefix / "Library" / "bin"]
     home = Path.home()
-    dirs += [home / ".local" / "bin", home / "bin"]
+    dirs += [
+        home / ".local" / "bin",
+        home / "bin",
+        home / "AppData" / "Roaming" / "TinyTeX" / "bin" / "windows",
+    ]
     tinytex = home / ".TinyTeX" / "bin"
     if tinytex.is_dir():
         dirs += [p for p in tinytex.glob("*") if p.is_dir()]
@@ -1694,9 +1699,11 @@ def find_latex_executable(name: str) -> str | None:
     if found:
         return found
     for directory in _latex_search_dirs():
-        candidate = directory / name
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return str(candidate)
+        names = (name, f"{name}.exe") if os.name == "nt" else (name,)
+        for candidate_name in names:
+            candidate = directory / candidate_name
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
     return None
 
 
@@ -1749,9 +1756,20 @@ def latex_engine_commands(engine: str, exe: str, tex_path: Path, outdir: Path) -
     return [cmd, cmd]
 
 
-def latex_compile_command(engine: str, exe: str, tex_path: Path, outdir: Path) -> str:
+def latex_compile_command(
+    engine: str,
+    exe: str,
+    tex_path: Path,
+    outdir: Path,
+    *,
+    shell: str | None = None,
+) -> str:
     """Shell command string an agent can run to compile `tex_path` into `outdir`."""
     cmds = latex_engine_commands(engine, exe, tex_path, outdir)
+    selected_shell = shell or ("powershell" if os.name == "nt" else "posix")
+    if selected_shell == "powershell":
+        separator = "; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
+        return separator.join(subprocess.list2cmdline(cmd) for cmd in cmds)
     return " && ".join(
         " ".join(shlex.quote(str(part)) for part in cmd) for cmd in cmds
     )

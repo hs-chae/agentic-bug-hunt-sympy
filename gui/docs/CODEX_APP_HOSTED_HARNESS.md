@@ -1,6 +1,7 @@
-# Agentic SymPy Codex App Harness
+# Agentic SymPy ChatGPT App Harness
 
-This branch exposes the agentic SymPy bug-hunt workflow through Codex App. Use
+This branch exposes the agentic SymPy bug-hunt workflow through the ChatGPT
+desktop app. Use
 `gpt-5.6-sol` for App subagents unless you intentionally choose another GPT-5.6
 tier.
 
@@ -23,7 +24,7 @@ sanitization. `run.local.json` and `_work/` are private local diagnostics.
 
 ## Control Loop
 
-For each phase, Codex App performs:
+For each phase, the ChatGPT desktop app performs:
 
 ```text
 prepare -> spawn subagent -> validate -> advance
@@ -38,18 +39,22 @@ scripts/gui_advance_phase.py
 scripts/gui_writeup_assemble.py
 ```
 
+All helpers are Python and support native Windows PowerShell. On Windows, use
+`scripts/setup_sympy_target.py`; do not invoke WSL or the Bash setup script.
+Store the repository on the Windows filesystem and use native Git and Python.
+
 `gui_validate_phase.py` writes a validation receipt. `gui_advance_phase.py`
 refuses to advance without a matching passing receipt whose plan hash and
 validated output manifest still match the filesystem.
 
 Validation mismatches are nonterminal. A failed validation returns
-`status: needs_repair`; Codex App should repair the current phase output and
+`status: needs_repair`; the app should repair the current phase output and
 rerun validation instead of ending the run. Validation of one batch never
 depends on a later batch.
 
 ## Batch Rule
 
-This is the batch-aligned branch. Each phase uses exactly one Codex App
+This is the batch-aligned branch. Each phase uses exactly one ChatGPT app
 subagent.
 
 ## Write-up
@@ -60,7 +65,14 @@ technical report.
 
 ## Release Safety
 
-Before public release, run:
+Before public release on Windows PowerShell, run:
+
+```powershell
+python -m unittest discover -s tests -v
+python scripts/security_scan.py
+```
+
+On macOS/Linux, run:
 
 ```sh
 python3 -m pytest -q

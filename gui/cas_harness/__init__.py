@@ -1,1 +1,1 @@
-"""Shared helpers for the agentic SymPy Codex App harness."""
+"""Shared helpers for the agentic SymPy ChatGPT desktop app harness."""
