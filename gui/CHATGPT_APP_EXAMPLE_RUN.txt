@@ -1,13 +1,13 @@
 You are Codex running in the ChatGPT desktop app. The current workspace is a writable parent folder, not necessarily the repository. Clone agentic-bug-hunt-sympy, use the cloned repository as the command working directory, and run a fully automatic example_run of the GPT-5.6 GUI pipeline.
 
 Goal:
-Clone the private gui branch, run exactly one hunter batch, validate it, advance once after validation passes, and report the next phase and batch.
+Clone the private gui branch, run exactly one hunter batch through the original agentic-bug-hunt-sympy phase order, complete write-up, and produce final-report/technical_report.pdf.
 
 Platform rules:
 - On Windows, use the Windows-native agent with PowerShell. Do not use WSL, bash, Git Bash, .sh scripts, tail, sed, or Unix path syntax.
 - On macOS or Linux, use the native shell.
 - After cloning, treat the cloned repository as the working directory for every file and command operation. Explicitly set cwd/workdir to that repository; do not rely only on a persistent shell cd.
-- This example_run contains batch 1 only. Do not prepare, inspect, validate, or require batch 2.
+- This example_run contains one hunter batch only. Run every downstream phase for batch 1, but do not prepare, inspect, validate, or require batch 2.
 - Use the Python executable available to the active agent: python on native Windows, normally python3 on macOS/Linux.
 
 Pipeline rules:
@@ -15,10 +15,12 @@ Pipeline rules:
 - Do not call harness/scripts/run_harness.py.
 - Do not use codex exec.
 - Do not ask me to run phase prompts manually.
-- Run exactly one ChatGPT desktop app subagent for the hunter packet.
+- Follow the original repository order: hunter -> verify -> diagnosis -> dedup -> artifact -> writeup.
+- Run exactly one ChatGPT desktop app subagent for each prepared phase packet.
 - Subagent model: gpt-5.6-sol.
 - Reasoning effort: use the app default unless explicitly changed by the operator.
 - Validation mismatches are repair states. Repair the current phase and retry until it passes; do not stop on the first mismatch.
+- PDF output is required. Do not use --skip-pdf and do not finish until final-report/technical_report.pdf exists.
 - HTTPS Git authentication for the private repository must already be available through Git Credential Manager or GitHub CLI configured for Git.
 
 Steps:
@@ -97,35 +99,55 @@ Steps:
    rm -rf "$RUN_ROOT"
    mkdir -p "$RUN_ROOT"
 
-5. Prepare exactly one hunter packet.
+5. Run batch 1 in the original repository order: hunter, verify, diagnosis, dedup, artifact. For each current phase:
+   a. Prepare its packet with gui_prepare_phase.py, batch 1, and gpt-5.6-sol.
+   b. Read the generated .prompt.md under _work/gui/batch_packets.
+   c. Run that full prompt as exactly one ChatGPT desktop app subagent using gpt-5.6-sol and wait for completion.
+   d. Validate that same phase for batch 1.
+   e. If validation returns needs_repair or ok false, repair only that phase's output and retry until it passes.
+   f. Advance that phase, then follow next_phase while keeping next_batch at 1.
+
+   Native Windows PowerShell commands for each phase:
+   $Phase = "hunter"  # then verify, diagnosis, dedup, artifact as advance directs
+   python scripts/gui_prepare_phase.py --run-root "$RunRoot" --sympy-dir "$TargetDir" --batch 1 --phase $Phase --model gpt-5.6-sol
+   python scripts/gui_validate_phase.py --run-root "$RunRoot" --sympy-dir "$TargetDir" --batch 1 --phase $Phase --json
+   python scripts/gui_advance_phase.py --run-root "$RunRoot" --batch 1 --phase $Phase
+
+   macOS/Linux commands for each phase:
+   PHASE="hunter"  # then verify, diagnosis, dedup, artifact as advance directs
+   python3 scripts/gui_prepare_phase.py --run-root "$RUN_ROOT" --sympy-dir "$TARGET_DIR" --batch 1 --phase "$PHASE" --model gpt-5.6-sol
+   python3 scripts/gui_validate_phase.py --run-root "$RUN_ROOT" --sympy-dir "$TARGET_DIR" --batch 1 --phase "$PHASE" --json
+   python3 scripts/gui_advance_phase.py --run-root "$RUN_ROOT" --batch 1 --phase "$PHASE"
+
+6. Never start hunter batch 2. If batch 1 becomes empty at any gate and advance suggests batch 2, ignore that suggestion and continue directly to write-up with the accepted artifacts, including an empty accepted set if necessary.
+
+7. Before write-up, find a LaTeX engine in this preference order: tectonic, latexmk, pdflatex. If none is available, install Tectonic without administrator privileges, preferably under gui/_local/tools, and continue. Do not use WSL on Windows.
 
    Native Windows PowerShell:
-   python scripts/gui_prepare_phase.py --run-root "$RunRoot" --sympy-dir "$TargetDir" --batch 1 --phase hunter --model gpt-5.6-sol
+   $LatexEngine = @("tectonic", "latexmk", "pdflatex") | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
 
    macOS/Linux:
-   python3 scripts/gui_prepare_phase.py --run-root "$RUN_ROOT" --sympy-dir "$TARGET_DIR" --batch 1 --phase hunter --model gpt-5.6-sol
+   LATEX_ENGINE="$(command -v tectonic || command -v latexmk || command -v pdflatex || true)"
 
-6. Read the generated batch-001 hunter packet and prompt under _work/gui/batch_packets. Run the prompt as exactly one ChatGPT desktop app subagent using gpt-5.6-sol. Give it the full prompt contents and no phase-changing instructions. Wait for it to write the requested batch-1 hunter output.
-
-7. Validate only batch 1.
+8. Prepare and run the batch-1 write-up packet as exactly one gpt-5.6-sol ChatGPT desktop app subagent. Do not pass --skip-pdf. The write-up subagent must process every generated per-bug prompt and produce all requested TeX files.
 
    Native Windows PowerShell:
-   python scripts/gui_validate_phase.py --run-root "$RunRoot" --sympy-dir "$TargetDir" --batch 1 --phase hunter --json
+   python scripts/gui_prepare_phase.py --run-root "$RunRoot" --sympy-dir "$TargetDir" --batch 1 --phase writeup --model gpt-5.6-sol --latex-engine "$LatexEngine"
+   python scripts/gui_writeup_assemble.py --run-root "$RunRoot" --sympy-dir "$TargetDir" --latex-engine "$LatexEngine"
 
    macOS/Linux:
-   python3 scripts/gui_validate_phase.py --run-root "$RUN_ROOT" --sympy-dir "$TARGET_DIR" --batch 1 --phase hunter --json
+   python3 scripts/gui_prepare_phase.py --run-root "$RUN_ROOT" --sympy-dir "$TARGET_DIR" --batch 1 --phase writeup --model gpt-5.6-sol --latex-engine "$LATEX_ENGINE"
+   python3 scripts/gui_writeup_assemble.py --run-root "$RUN_ROOT" --sympy-dir "$TARGET_DIR" --latex-engine "$LATEX_ENGINE"
 
-   Confirm that the returned batch is 1 and plan_path ends in _work/batch-001/plans/candidate_batch.json. If any result mentions batch 2, treat that as an orchestration mistake and rerun the exact batch-1 command. Never create batch 2 for this example_run.
-
-8. If validation returns needs_repair, blocked, or ok false, inspect the errors, repair only the batch-1 hunter output, and rerun the same validation. If needed, rerun the same hunter subagent with the validator errors as repair instructions. Repeat until validation passes.
-
-9. After validation passes, advance once.
+9. If TeX validation or PDF compilation needs repair, inspect the compile log, repair only the write-up outputs, and rerun the assembler until final-report/technical_report.pdf exists. Then validate and advance write-up.
 
    Native Windows PowerShell:
-   python scripts/gui_advance_phase.py --run-root "$RunRoot" --batch 1 --phase hunter
+   python scripts/gui_validate_phase.py --run-root "$RunRoot" --sympy-dir "$TargetDir" --batch 1 --phase writeup --json
+   python scripts/gui_advance_phase.py --run-root "$RunRoot" --batch 1 --phase writeup
 
    macOS/Linux:
-   python3 scripts/gui_advance_phase.py --run-root "$RUN_ROOT" --batch 1 --phase hunter
+   python3 scripts/gui_validate_phase.py --run-root "$RUN_ROOT" --sympy-dir "$TARGET_DIR" --batch 1 --phase writeup --json
+   python3 scripts/gui_advance_phase.py --run-root "$RUN_ROOT" --batch 1 --phase writeup
 
 10. Report:
 - cloned repository path and commit
@@ -134,8 +156,10 @@ Steps:
 - TARGET_DIR
 - RUN_ROOT
 - hunter candidate count
-- validation status
-- next_phase and next_batch
+- phase path and validation status for hunter, verify, diagnosis, dedup, artifact, and writeup
+- accepted artifact count
+- final-report/technical_report.tex path
+- final-report/technical_report.pdf path and LaTeX engine
 - validation issues repaired automatically
 
 Only report an incomplete run for a concrete external failure that cannot be repaired in the workspace, such as missing repository access, unavailable app subagents, or a missing required executable.
